@@ -304,6 +304,9 @@ cmd_vm() {
         usb)
             cmd_vm_usb "$@"
             ;;
+        net)
+            cmd_vm_net "$@"
+            ;;
         help|--help|-h)
             cat <<EOF
 iwt vm - Manage Windows VMs
@@ -319,6 +322,7 @@ Subcommands:
   share <action>      Manage shared folders
   gpu <action>        Manage GPU passthrough
   usb <action>        Manage USB device passthrough
+  net <action>        Manage networking and port forwarding
 
 Create options:
   --name NAME         VM name (default: windows)
@@ -329,10 +333,10 @@ Create options:
 Example:
   iwt vm create --name win11 --image windows-modified.iso
   iwt vm rdp win11
-  iwt vm usb attach 046d c52b --name logitech
-  iwt vm gpu attach --type physical --pci 0000:01:00.0
+  iwt vm net forward 8080 --to 80
+  iwt vm usb attach 046d:c52b --name logitech
 
-Run 'iwt vm usb --help', 'iwt vm gpu --help', etc. for details.
+Run 'iwt vm net --help', 'iwt vm usb --help', etc. for details.
 EOF
             ;;
         *)
@@ -668,6 +672,194 @@ EOF
             ;;
         *)
             err "Unknown share subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_vm_net() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        forward|fwd)
+            cmd_vm_net_forward "$@"
+            ;;
+        nic)
+            cmd_vm_net_nic "$@"
+            ;;
+        status)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "${1:-}" && "${1:-}" != -* ]] && { vm_name="$1"; shift; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            net_status
+            ;;
+        help|--help|-h)
+            cat <<EOF
+iwt vm net - Manage networking and port forwarding
+
+Subcommands:
+  forward <action>    Manage port forwards
+  nic <action>        Manage network interfaces
+  status              Show networking status (IP, NICs, forwards)
+
+Forward subcommands:
+  forward add <port> [opts]   Forward a host port to the VM
+  forward remove <name>       Remove a port forward
+  forward remove --all        Remove all IWT port forwards
+  forward list                List port forwards
+
+Forward options:
+  --to PORT                   VM port (default: same as listen port)
+  --proto PROTO               tcp | udp (default: tcp)
+  --listen ADDR               Listen address (default: 0.0.0.0)
+  --name NAME                 Forward name (default: proto-port)
+  --vm NAME                   Target VM
+
+NIC subcommands:
+  nic add <name> [opts]       Add a network interface
+  nic remove <name>           Remove a network interface
+
+NIC options:
+  --network NETWORK           Incus network (default: incusbr0)
+  --type TYPE                 bridged | macvlan | sriov | physical (default: bridged)
+
+Examples:
+  iwt vm net status
+  iwt vm net forward add 8080
+  iwt vm net forward add 3000 --to 3000 --name webapp
+  iwt vm net forward add 53 --proto udp --name dns
+  iwt vm net forward list
+  iwt vm net forward remove webapp
+  iwt vm net nic add eth1 --network incusbr1
+  iwt vm net nic remove eth1
+EOF
+            ;;
+        *)
+            err "Unknown net subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_vm_net_forward() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        add)
+            local listen_port=""
+            local connect_port=""
+            local protocol="tcp"
+            local listen_addr="0.0.0.0"
+            local fwd_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --to)     connect_port="$2"; shift 2 ;;
+                    --proto)  protocol="$2"; shift 2 ;;
+                    --listen) listen_addr="$2"; shift 2 ;;
+                    --name)   fwd_name="$2"; shift 2 ;;
+                    --vm)     vm_name="$2"; shift 2 ;;
+                    -*)       err "Unknown option: $1"; exit 1 ;;
+                    *)        listen_port="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$listen_port" ]] || die "Usage: iwt vm net forward add <port> [--to PORT] [--proto tcp|udp]"
+            [[ -z "$connect_port" ]] && connect_port="$listen_port"
+
+            net_forward_add "$listen_port" "$connect_port" "$protocol" "$listen_addr" "$fwd_name"
+            ;;
+        remove|rm)
+            local fwd_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm)  vm_name="$2"; shift 2 ;;
+                    --all) [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+                           net_forward_remove_all; return ;;
+                    -*)    err "Unknown option: $1"; exit 1 ;;
+                    *)     fwd_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$fwd_name" ]] || die "Usage: iwt vm net forward remove <name> or --all"
+            net_forward_remove "$fwd_name"
+            ;;
+        list|ls)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+
+            bold "Port forwards on $IWT_VM_NAME:"
+            printf "  %-20s %-30s    %s\n" "NAME" "LISTEN" "CONNECT"
+            printf "  %-20s %-30s    %s\n" "----" "------" "-------"
+            net_forward_list
+            ;;
+        help|--help|-h)
+            echo "Usage: iwt vm net forward <add|remove|list> [options]"
+            echo "Run 'iwt vm net --help' for details."
+            ;;
+        *)
+            err "Unknown forward subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_vm_net_nic() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        add)
+            local nic_name=""
+            local network="incusbr0"
+            local nic_type="bridged"
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --network) network="$2"; shift 2 ;;
+                    --type)    nic_type="$2"; shift 2 ;;
+                    --vm)      vm_name="$2"; shift 2 ;;
+                    -*)        err "Unknown option: $1"; exit 1 ;;
+                    *)         nic_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$nic_name" ]] || die "Usage: iwt vm net nic add <name> [--network NET] [--type TYPE]"
+            net_nic_add "$nic_name" "$network" "$nic_type"
+            ;;
+        remove|rm)
+            local nic_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm) vm_name="$2"; shift 2 ;;
+                    -*)   err "Unknown option: $1"; exit 1 ;;
+                    *)    nic_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$nic_name" ]] || die "Usage: iwt vm net nic remove <name>"
+            net_nic_remove "$nic_name"
+            ;;
+        help|--help|-h)
+            echo "Usage: iwt vm net nic <add|remove> [options]"
+            echo "Run 'iwt vm net --help' for details."
+            ;;
+        *)
+            err "Unknown nic subcommand: $subcmd"
             exit 1
             ;;
     esac
@@ -1103,7 +1295,7 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
             ;;
         vm)
-            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu usb help" -- "$cur"))
+            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu usb net help" -- "$cur"))
             ;;
         profiles)
             COMPREPLY=($(compgen -W "install list show diff help" -- "$cur"))
@@ -1138,7 +1330,7 @@ _iwt() {
         args)
             case $words[1] in
                 image)     _values 'subcommand' download build list help ;;
-                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu usb help ;;
+                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu usb net help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
                 config)    _values 'subcommand' init show edit path help ;;

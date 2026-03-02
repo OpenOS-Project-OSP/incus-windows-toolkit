@@ -1047,3 +1047,217 @@ usb_detach_all() {
     fi
 }
 
+# --- Networking ---
+
+_IWT_FWD_PREFIX="iwt-fwd-"
+
+net_forward_add() {
+    local listen_port="$1"
+    local connect_port="${2:-$listen_port}"
+    local protocol="${3:-tcp}"
+    local listen_addr="${4:-0.0.0.0}"
+    local fwd_name="${5:-}"
+
+    [[ -n "$listen_port" ]] || die "Listen port required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local vm_ip
+    vm_ip=$(vm_get_ip)
+    [[ -n "$vm_ip" ]] || die "Cannot determine VM IP. Is the VM running?"
+
+    if [[ -z "$fwd_name" ]]; then
+        fwd_name="${protocol}-${listen_port}"
+    fi
+
+    local device_name="${_IWT_FWD_PREFIX}${fwd_name}"
+
+    if incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${device_name}:"; then
+        die "Forward '$fwd_name' already exists. Remove it first."
+    fi
+
+    info "Forwarding ${listen_addr}:${listen_port} -> ${vm_ip}:${connect_port} (${protocol})"
+
+    incus config device add "$IWT_VM_NAME" "$device_name" proxy \
+        "listen=${protocol}:${listen_addr}:${listen_port}" \
+        "connect=${protocol}:${vm_ip}:${connect_port}" \
+        nat=true
+
+    ok "Port forward added: $fwd_name"
+}
+
+net_forward_remove() {
+    local fwd_name="$1"
+
+    [[ -n "$fwd_name" ]] || die "Forward name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local device_name="${_IWT_FWD_PREFIX}${fwd_name}"
+
+    if ! incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${device_name}:"; then
+        die "Forward '$fwd_name' not found on $IWT_VM_NAME"
+    fi
+
+    info "Removing port forward: $fwd_name"
+    incus config device remove "$IWT_VM_NAME" "$device_name"
+    ok "Port forward removed: $fwd_name"
+}
+
+net_forward_remove_all() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+    local removed=0
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^(${_IWT_FWD_PREFIX}.+):$ ]]; then
+            local full_name="${BASH_REMATCH[1]}"
+            info "Removing: $full_name"
+            incus config device remove "$IWT_VM_NAME" "$full_name"
+            removed=$((removed + 1))
+        fi
+    done <<< "$devices"
+
+    if [[ $removed -eq 0 ]]; then
+        info "No IWT port forwards to remove"
+    else
+        ok "Removed $removed port forward(s)"
+    fi
+}
+
+net_forward_list() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+
+    local found=false
+    local current_name=""
+    local current_listen=""
+    local current_connect=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^${_IWT_FWD_PREFIX}(.+):$ ]]; then
+            if [[ -n "$current_name" ]]; then
+                printf "  %-20s %-30s -> %s\n" "$current_name" "$current_listen" "$current_connect"
+            fi
+            current_name="${BASH_REMATCH[1]}"
+            current_listen=""
+            current_connect=""
+            found=true
+        elif [[ "$line" =~ ^[[:space:]]+listen:[[:space:]]+(.+)$ ]]; then
+            current_listen="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]+connect:[[:space:]]+(.+)$ ]]; then
+            current_connect="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[a-zA-Z] && ! "$line" =~ ^${_IWT_FWD_PREFIX} ]]; then
+            if [[ -n "$current_name" ]]; then
+                printf "  %-20s %-30s -> %s\n" "$current_name" "$current_listen" "$current_connect"
+                current_name=""
+            fi
+        fi
+    done <<< "$devices"
+
+    if [[ -n "$current_name" ]]; then
+        printf "  %-20s %-30s -> %s\n" "$current_name" "$current_listen" "$current_connect"
+    fi
+
+    if [[ "$found" == false ]]; then
+        info "No port forwards on $IWT_VM_NAME"
+    fi
+}
+
+net_status() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    echo "VM:     $IWT_VM_NAME"
+
+    if vm_is_running; then
+        local ip
+        ip=$(vm_get_ip 2>/dev/null || echo "unknown")
+        echo "Status: running"
+        echo "IP:     $ip"
+    else
+        echo "Status: stopped"
+    fi
+
+    # Show NIC devices
+    echo ""
+    echo "Network interfaces:"
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+
+    local in_nic=false
+    local nic_name=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([a-zA-Z0-9_-]+):$ ]]; then
+            in_nic=false
+            nic_name="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]+type:[[:space:]]+nic$ ]]; then
+            in_nic=true
+            echo "  $nic_name:"
+        elif [[ "$in_nic" == true && "$line" =~ ^[[:space:]]+(.+):[[:space:]]+(.+)$ ]]; then
+            printf "    %-15s %s\n" "${BASH_REMATCH[1]}:" "${BASH_REMATCH[2]}"
+        fi
+    done <<< "$devices"
+
+    # Show port forwards
+    echo ""
+    echo "Port forwards:"
+    net_forward_list
+}
+
+net_nic_add() {
+    local nic_name="$1"
+    local network="${2:-incusbr0}"
+    local nic_type="${3:-bridged}"
+
+    [[ -n "$nic_name" ]] || die "NIC name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    if incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${nic_name}:"; then
+        die "Device '$nic_name' already exists on $IWT_VM_NAME"
+    fi
+
+    info "Adding NIC '$nic_name' (type: $nic_type, network: $network)"
+
+    incus config device add "$IWT_VM_NAME" "$nic_name" nic \
+        nictype="$nic_type" \
+        network="$network"
+
+    if vm_is_running; then
+        ok "NIC hotplugged into running VM"
+    else
+        ok "NIC added (will connect when VM starts)"
+    fi
+}
+
+net_nic_remove() {
+    local nic_name="$1"
+
+    [[ -n "$nic_name" ]] || die "NIC name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    info "Removing NIC: $nic_name"
+    incus config device remove "$IWT_VM_NAME" "$nic_name"
+    ok "NIC removed"
+}
+

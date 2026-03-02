@@ -246,6 +246,26 @@ test_backend_usb_functions_exist() {
     declare -f usb_list_vm &>/dev/null
 }
 
+test_cli_vm_net_help() {
+    "$IWT_ROOT/cli/iwt.sh" vm net --help | grep -q "forward"
+    "$IWT_ROOT/cli/iwt.sh" vm net --help | grep -q "nic"
+    "$IWT_ROOT/cli/iwt.sh" vm net --help | grep -q "status"
+}
+
+test_cli_vm_help_mentions_net() {
+    "$IWT_ROOT/cli/iwt.sh" vm --help | grep -q "net"
+}
+
+test_backend_net_functions_exist() {
+    source "$IWT_ROOT/remoteapp/backend/incus-backend.sh"
+    declare -f net_forward_add &>/dev/null
+    declare -f net_forward_remove &>/dev/null
+    declare -f net_forward_list &>/dev/null
+    declare -f net_status &>/dev/null
+    declare -f net_nic_add &>/dev/null
+    declare -f net_nic_remove &>/dev/null
+}
+
 test_apps_conf_format() {
     local conf="$IWT_ROOT/remoteapp/freedesktop/apps.conf"
     [[ -f "$conf" ]]
@@ -338,6 +358,9 @@ run_unit_tests() {
     run_test "CLI vm usb help"         test_cli_vm_usb_help
     run_test "CLI vm help has usb"     test_cli_vm_help_mentions_usb
     run_test "Backend usb funcs"       test_backend_usb_functions_exist
+    run_test "CLI vm net help"         test_cli_vm_net_help
+    run_test "CLI vm help has net"     test_cli_vm_help_mentions_net
+    run_test "Backend net funcs"       test_backend_net_functions_exist
     run_test "apps.conf format"        test_apps_conf_format
 }
 
