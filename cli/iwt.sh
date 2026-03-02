@@ -292,6 +292,9 @@ cmd_vm() {
             vm_wait_for_rdp
             rdp_connect_full "$@"
             ;;
+        snapshot)
+            cmd_vm_snapshot "$@"
+            ;;
         help|--help|-h)
             cat <<EOF
 iwt vm - Manage Windows VMs
@@ -303,6 +306,7 @@ Subcommands:
   status [name]       Show VM status
   list                List all Incus VMs
   rdp [name]          Open full RDP desktop session
+  snapshot <action>   Manage VM snapshots
 
 Create options:
   --name NAME         VM name (default: windows)
@@ -313,6 +317,10 @@ Create options:
 Example:
   iwt vm create --name win11 --image windows-modified.iso
   iwt vm rdp win11
+  iwt vm snapshot create --name pre-update
+  iwt vm snapshot restore pre-update
+
+Run 'iwt vm snapshot --help' for snapshot details.
 EOF
             ;;
         *)
@@ -365,6 +373,162 @@ cmd_vm_create() {
     fi
 
     ok "VM '$name' created. Start with: iwt vm start $name"
+}
+
+cmd_vm_snapshot() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        create)
+            local snap_name=""
+            local stateful=false
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --name)     snap_name="$2"; shift 2 ;;
+                    --stateful) stateful=true; shift ;;
+                    --vm)       vm_name="$2"; shift 2 ;;
+                    *)          err "Unknown option: $1"; exit 1 ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            snapshot_create "$snap_name" "$stateful"
+            ;;
+        restore)
+            local snap_name=""
+            local stateful=false
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --stateful) stateful=true; shift ;;
+                    --vm)       vm_name="$2"; shift 2 ;;
+                    -*)         err "Unknown option: $1"; exit 1 ;;
+                    *)          snap_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$snap_name" ]] || die "Usage: iwt vm snapshot restore <name> [--stateful] [--vm NAME]"
+            snapshot_restore "$snap_name" "$stateful"
+            ;;
+        delete|rm)
+            local snap_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm) vm_name="$2"; shift 2 ;;
+                    -*)   err "Unknown option: $1"; exit 1 ;;
+                    *)    snap_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$snap_name" ]] || die "Usage: iwt vm snapshot delete <name> [--vm NAME]"
+            snapshot_delete "$snap_name"
+            ;;
+        list|ls)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "${1:-}" && "${1:-}" != -* ]] && { vm_name="$1"; shift; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            snapshot_list
+            ;;
+        auto)
+            cmd_vm_snapshot_auto "$@"
+            ;;
+        help|--help|-h)
+            cat <<EOF
+iwt vm snapshot - Manage VM snapshots
+
+Subcommands:
+  create [options]        Create a snapshot
+  restore <name>          Restore a snapshot
+  delete <name>           Delete a snapshot
+  list [vm-name]          List snapshots
+  auto <action>           Manage auto-snapshot schedule
+
+Create options:
+  --name NAME             Snapshot name (auto-generated if omitted)
+  --stateful              Capture running VM state (memory + disk)
+  --vm NAME               Target VM (default: \$IWT_VM_NAME)
+
+Auto subcommands:
+  auto set <schedule>     Set cron schedule (e.g. "@daily", "0 6 * * *")
+  auto show               Show current schedule
+  auto disable            Disable auto-snapshots
+
+Auto options:
+  --expiry DURATION       Auto-delete after duration (e.g. "7d", "30d")
+  --pattern PATTERN       Snapshot naming pattern (default: "iwt-snap%d")
+
+Examples:
+  iwt vm snapshot create --name pre-update
+  iwt vm snapshot create --stateful --name checkpoint
+  iwt vm snapshot list
+  iwt vm snapshot restore pre-update
+  iwt vm snapshot delete pre-update
+  iwt vm snapshot auto set "@daily" --expiry 7d
+  iwt vm snapshot auto show
+  iwt vm snapshot auto disable
+EOF
+            ;;
+        *)
+            err "Unknown snapshot subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_vm_snapshot_auto() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        set)
+            local schedule="${1:?Usage: iwt vm snapshot auto set <schedule> [--expiry DURATION] [--pattern PATTERN]}"
+            shift
+            local expiry=""
+            local pattern="iwt-snap%d"
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --expiry)  expiry="$2"; shift 2 ;;
+                    --pattern) pattern="$2"; shift 2 ;;
+                    --vm)      vm_name="$2"; shift 2 ;;
+                    *)         err "Unknown option: $1"; exit 1 ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            snapshot_schedule_set "$schedule" "$expiry" "$pattern"
+            ;;
+        show)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            snapshot_schedule_show
+            ;;
+        disable)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            snapshot_schedule_disable
+            ;;
+        help|--help|-h)
+            echo "Usage: iwt vm snapshot auto <set|show|disable> [options]"
+            echo "Run 'iwt vm snapshot --help' for details."
+            ;;
+        *)
+            err "Unknown auto subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
 }
 
 # --- Profile commands ---
@@ -550,7 +714,7 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
             ;;
         vm)
-            COMPREPLY=($(compgen -W "create start stop status list rdp help" -- "$cur"))
+            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot help" -- "$cur"))
             ;;
         profiles)
             COMPREPLY=($(compgen -W "install list show diff help" -- "$cur"))
@@ -585,7 +749,7 @@ _iwt() {
         args)
             case $words[1] in
                 image)     _values 'subcommand' download build list help ;;
-                vm)        _values 'subcommand' create start stop status list rdp help ;;
+                vm)        _values 'subcommand' create start stop status list rdp snapshot help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
                 config)    _values 'subcommand' init show edit path help ;;

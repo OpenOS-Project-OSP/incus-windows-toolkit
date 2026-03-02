@@ -269,3 +269,155 @@ vm_extract_icon() {
         echo ""
     fi
 }
+
+# --- Snapshot management ---
+
+snapshot_create() {
+    local name="${1:-}"
+    local stateful="${2:-false}"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local args=()
+    if [[ "$stateful" == true ]]; then
+        if ! vm_is_running; then
+            die "VM must be running for stateful snapshots"
+        fi
+        args+=(--stateful)
+    fi
+
+    if [[ -n "$name" ]]; then
+        info "Creating snapshot: $IWT_VM_NAME/$name"
+        incus snapshot create "$IWT_VM_NAME" "$name" "${args[@]}"
+    else
+        info "Creating snapshot of $IWT_VM_NAME (auto-named)"
+        incus snapshot create "$IWT_VM_NAME" "${args[@]}"
+    fi
+
+    ok "Snapshot created"
+}
+
+snapshot_restore() {
+    local name="$1"
+    local stateful="${2:-false}"
+
+    [[ -n "$name" ]] || die "Snapshot name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local args=()
+    if [[ "$stateful" == true ]]; then
+        args+=(--stateful)
+    fi
+
+    # Warn if VM is running -- restore will stop it
+    if vm_is_running; then
+        warn "VM is running. It will be stopped before restore."
+        incus stop "$IWT_VM_NAME" --force
+    fi
+
+    info "Restoring snapshot: $IWT_VM_NAME/$name"
+    incus snapshot restore "$IWT_VM_NAME" "$name" "${args[@]}"
+    ok "Snapshot restored: $name"
+}
+
+snapshot_delete() {
+    local name="$1"
+
+    [[ -n "$name" ]] || die "Snapshot name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    info "Deleting snapshot: $IWT_VM_NAME/$name"
+    incus snapshot delete "$IWT_VM_NAME" "$name"
+    ok "Snapshot deleted: $name"
+}
+
+snapshot_list() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    # Parse snapshot info from incus info output
+    local snap_info
+    snap_info=$(incus info "$IWT_VM_NAME" 2>/dev/null)
+
+    local in_snapshots=false
+    local snap_count=0
+
+    while IFS= read -r line; do
+        if [[ "$line" == "Snapshots:" ]]; then
+            in_snapshots=true
+            continue
+        fi
+
+        if [[ "$in_snapshots" == true ]]; then
+            # End of snapshots section (next top-level key)
+            if [[ "$line" =~ ^[A-Z] && "$line" != "  "* ]]; then
+                break
+            fi
+            if [[ -n "$line" ]]; then
+                echo "$line"
+                snap_count=$((snap_count + 1))
+            fi
+        fi
+    done <<< "$snap_info"
+
+    if [[ $snap_count -eq 0 ]]; then
+        info "No snapshots for $IWT_VM_NAME"
+    fi
+}
+
+snapshot_schedule_set() {
+    local schedule="$1"
+    local expiry="${2:-}"
+    local pattern="${3:-iwt-snap%d}"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    info "Setting snapshot schedule: $schedule"
+    incus config set "$IWT_VM_NAME" snapshots.schedule "$schedule"
+    incus config set "$IWT_VM_NAME" snapshots.pattern "$pattern"
+    incus config set "$IWT_VM_NAME" snapshots.schedule.stopped false
+
+    if [[ -n "$expiry" ]]; then
+        info "Setting snapshot expiry: $expiry"
+        incus config set "$IWT_VM_NAME" snapshots.expiry "$expiry"
+    fi
+
+    ok "Auto-snapshot configured"
+}
+
+snapshot_schedule_show() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local schedule expiry pattern
+    schedule=$(incus config get "$IWT_VM_NAME" snapshots.schedule 2>/dev/null || echo "(not set)")
+    expiry=$(incus config get "$IWT_VM_NAME" snapshots.expiry 2>/dev/null || echo "(not set)")
+    pattern=$(incus config get "$IWT_VM_NAME" snapshots.pattern 2>/dev/null || echo "(not set)")
+
+    echo "VM:        $IWT_VM_NAME"
+    echo "Schedule:  $schedule"
+    echo "Expiry:    $expiry"
+    echo "Pattern:   $pattern"
+}
+
+snapshot_schedule_disable() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    incus config unset "$IWT_VM_NAME" snapshots.schedule
+    ok "Auto-snapshot disabled for $IWT_VM_NAME"
+}
+

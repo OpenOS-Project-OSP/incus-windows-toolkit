@@ -127,13 +127,18 @@ test_build_image_requires_iso() {
 }
 
 test_download_list_versions() {
-    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions | grep -q "11"
-    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions | grep -q "server-2022"
+    local out
+    out=$("$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions)
+    echo "$out" | grep -q "11"
+    echo "$out" | grep -q "server-2022"
 }
 
 test_download_list_langs() {
-    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version 11 | grep -q "English"
-    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version server-2022 | grep -q "English"
+    local out
+    out=$("$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version 11)
+    echo "$out" | grep -q "English"
+    out=$("$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version server-2022)
+    echo "$out" | grep -q "English"
 }
 
 test_download_help() {
@@ -146,6 +151,27 @@ test_cli_image_list() {
 
 test_cli_image_download_help() {
     "$IWT_ROOT/cli/iwt.sh" image --help | grep -q "download"
+}
+
+test_cli_vm_snapshot_help() {
+    "$IWT_ROOT/cli/iwt.sh" vm snapshot --help | grep -q "create"
+    "$IWT_ROOT/cli/iwt.sh" vm snapshot --help | grep -q "restore"
+    "$IWT_ROOT/cli/iwt.sh" vm snapshot --help | grep -q "auto"
+}
+
+test_cli_vm_help_mentions_snapshot() {
+    "$IWT_ROOT/cli/iwt.sh" vm --help | grep -q "snapshot"
+}
+
+test_backend_snapshot_functions_exist() {
+    source "$IWT_ROOT/remoteapp/backend/incus-backend.sh"
+    declare -f snapshot_create &>/dev/null
+    declare -f snapshot_restore &>/dev/null
+    declare -f snapshot_delete &>/dev/null
+    declare -f snapshot_list &>/dev/null
+    declare -f snapshot_schedule_set &>/dev/null
+    declare -f snapshot_schedule_show &>/dev/null
+    declare -f snapshot_schedule_disable &>/dev/null
 }
 
 test_apps_conf_format() {
@@ -181,6 +207,23 @@ test_incus_vm_create_delete() {
     incus delete "$name" --force
 }
 
+test_incus_snapshot_lifecycle() {
+    local name="iwt-snap-test-$$"
+    "$IWT_ROOT/cli/iwt.sh" vm create --name "$name"
+
+    # Create snapshot
+    IWT_VM_NAME="$name" "$IWT_ROOT/cli/iwt.sh" vm snapshot create --name test-snap
+
+    # List snapshots
+    IWT_VM_NAME="$name" "$IWT_ROOT/cli/iwt.sh" vm snapshot list | grep -q "test-snap"
+
+    # Delete snapshot
+    IWT_VM_NAME="$name" "$IWT_ROOT/cli/iwt.sh" vm snapshot delete test-snap
+
+    # Cleanup
+    incus delete "$name" --force
+}
+
 # --- Runner ---
 
 run_unit_tests() {
@@ -208,6 +251,9 @@ run_unit_tests() {
     run_test "Download help"           test_download_help
     run_test "CLI image list"          test_cli_image_list
     run_test "CLI image download help" test_cli_image_download_help
+    run_test "CLI vm snapshot help"    test_cli_vm_snapshot_help
+    run_test "CLI vm help has snapshot" test_cli_vm_help_mentions_snapshot
+    run_test "Backend snapshot funcs"  test_backend_snapshot_functions_exist
     run_test "apps.conf format"        test_apps_conf_format
 }
 
@@ -235,6 +281,7 @@ run_integration_tests() {
 
     run_test "Incus profiles install"  test_incus_profiles_install
     run_test "Incus VM create/delete"  test_incus_vm_create_delete
+    run_test "Incus snapshot lifecycle" test_incus_snapshot_lifecycle
 }
 
 # --- Main ---
