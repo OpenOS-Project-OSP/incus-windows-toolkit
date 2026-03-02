@@ -126,6 +126,28 @@ test_build_image_requires_iso() {
     ! "$IWT_ROOT/image-pipeline/scripts/build-image.sh" 2>/dev/null
 }
 
+test_download_list_versions() {
+    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions | grep -q "11"
+    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions | grep -q "server-2022"
+}
+
+test_download_list_langs() {
+    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version 11 | grep -q "English"
+    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-langs --version server-2022 | grep -q "English"
+}
+
+test_download_help() {
+    "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --help | grep -q "version"
+}
+
+test_cli_image_list() {
+    "$IWT_ROOT/cli/iwt.sh" image list | grep -q "Consumer"
+}
+
+test_cli_image_download_help() {
+    "$IWT_ROOT/cli/iwt.sh" image --help | grep -q "download"
+}
+
 test_apps_conf_format() {
     local conf="$IWT_ROOT/remoteapp/freedesktop/apps.conf"
     [[ -f "$conf" ]]
@@ -181,6 +203,11 @@ run_unit_tests() {
     run_test "Lib arch_to_qemu"        test_lib_arch_to_qemu
     run_test "Lib human_size"          test_lib_human_size
     run_test "Build requires --iso"    test_build_image_requires_iso
+    run_test "Download list versions"  test_download_list_versions
+    run_test "Download list langs"     test_download_list_langs
+    run_test "Download help"           test_download_help
+    run_test "CLI image list"          test_cli_image_list
+    run_test "CLI image download help" test_cli_image_download_help
     run_test "apps.conf format"        test_apps_conf_format
 }
 

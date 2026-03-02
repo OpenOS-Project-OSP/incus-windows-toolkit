@@ -199,14 +199,29 @@ cmd_image() {
         build)
             exec "$IWT_ROOT/image-pipeline/scripts/build-image.sh" "$@"
             ;;
+        download)
+            exec "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" "$@"
+            ;;
+        list)
+            exec "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions
+            ;;
         help|--help|-h)
             cat <<EOF
-iwt image - Build Windows images for Incus
+iwt image - Build and download Windows images for Incus
 
 Subcommands:
-  build     Build a Windows image from an ISO
+  download    Download a Windows ISO from Microsoft
+  build       Build an Incus-ready image from an ISO
+  list        List available Windows versions
 
-Options (passed to build):
+Download options:
+  --version VER       10 | 11 | server-2022 | server-2025 (default: 11)
+  --lang LANG         Language (default: "English (United States)")
+  --arch ARCH         x86_64 | arm64 (default: auto-detect)
+  --output-dir DIR    Download directory (default: current directory)
+  --list-langs        List available languages for a version
+
+Build options:
   --iso PATH          Path to Windows ISO (required)
   --arch ARCH         x86_64 | arm64 (default: auto-detect)
   --edition EDITION   Windows edition (default: Pro)
@@ -217,8 +232,12 @@ Options (passed to build):
   --size SIZE         Disk size (default: 64G)
   --keep-work         Preserve work directory for debugging
 
-Example:
-  iwt image build --iso Win11_24H2.iso --slim --arch x86_64
+Examples:
+  iwt image list
+  iwt image download --version 11 --lang "English (United States)"
+  iwt image download --version server-2022
+  iwt image download --version 11 --arch arm64
+  iwt image build --iso Win11_24H2.iso --slim
 EOF
             ;;
         *)
@@ -528,7 +547,7 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
             ;;
         image)
-            COMPREPLY=($(compgen -W "build help" -- "$cur"))
+            COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
             ;;
         vm)
             COMPREPLY=($(compgen -W "create start stop status list rdp help" -- "$cur"))
@@ -565,7 +584,7 @@ _iwt() {
         cmd) _describe 'command' commands ;;
         args)
             case $words[1] in
-                image)     _values 'subcommand' build help ;;
+                image)     _values 'subcommand' download build list help ;;
                 vm)        _values 'subcommand' create start stop status list rdp help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
