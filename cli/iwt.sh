@@ -295,6 +295,9 @@ cmd_vm() {
         snapshot)
             cmd_vm_snapshot "$@"
             ;;
+        share)
+            cmd_vm_share "$@"
+            ;;
         help|--help|-h)
             cat <<EOF
 iwt vm - Manage Windows VMs
@@ -307,6 +310,7 @@ Subcommands:
   list                List all Incus VMs
   rdp [name]          Open full RDP desktop session
   snapshot <action>   Manage VM snapshots
+  share <action>      Manage shared folders
 
 Create options:
   --name NAME         VM name (default: windows)
@@ -318,9 +322,9 @@ Example:
   iwt vm create --name win11 --image windows-modified.iso
   iwt vm rdp win11
   iwt vm snapshot create --name pre-update
-  iwt vm snapshot restore pre-update
+  iwt vm share add ~/Projects --drive P
 
-Run 'iwt vm snapshot --help' for snapshot details.
+Run 'iwt vm snapshot --help' or 'iwt vm share --help' for details.
 EOF
             ;;
         *)
@@ -531,6 +535,136 @@ cmd_vm_snapshot_auto() {
     esac
 }
 
+cmd_vm_share() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        add)
+            local host_path=""
+            local share_name=""
+            local drive_letter=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --name)   share_name="$2"; shift 2 ;;
+                    --drive)  drive_letter="$2"; shift 2 ;;
+                    --vm)     vm_name="$2"; shift 2 ;;
+                    -*)       err "Unknown option: $1"; exit 1 ;;
+                    *)        host_path="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$host_path" ]] || die "Usage: iwt vm share add <host_path> [--name NAME] [--drive LETTER] [--vm NAME]"
+            share_add "$host_path" "$share_name" "$drive_letter"
+            ;;
+        remove|rm)
+            local share_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm) vm_name="$2"; shift 2 ;;
+                    -*)   err "Unknown option: $1"; exit 1 ;;
+                    *)    share_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$share_name" ]] || die "Usage: iwt vm share remove <name> [--vm NAME]"
+            share_remove "$share_name"
+            ;;
+        list|ls)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "${1:-}" && "${1:-}" != -* ]] && { vm_name="$1"; shift; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+
+            bold "Shared folders on $IWT_VM_NAME:"
+            printf "  %-15s %-40s %s\n" "NAME" "HOST PATH" "GUEST PATH"
+            printf "  %-15s %-40s %s\n" "----" "---------" "----------"
+            share_list
+            ;;
+        mount)
+            local share_name=""
+            local drive_letter=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm) vm_name="$2"; shift 2 ;;
+                    -*)   err "Unknown option: $1"; exit 1 ;;
+                    *)
+                        if [[ -z "$share_name" ]]; then
+                            share_name="$1"
+                        else
+                            drive_letter="$1"
+                        fi
+                        shift
+                        ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$share_name" ]] || die "Usage: iwt vm share mount <name> <drive_letter> [--vm NAME]"
+            [[ -n "$drive_letter" ]] || die "Drive letter required (e.g. S)"
+            share_mount_in_guest "$share_name" "$drive_letter"
+            ;;
+        mount-all)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            share_mount_all
+            ;;
+        config)
+            local conf="$IWT_ROOT/remoteapp/freedesktop/shares.conf"
+            if [[ "${1:-}" == "edit" ]]; then
+                "${EDITOR:-vi}" "$conf"
+            else
+                info "Share drive map config: $conf"
+                cat "$conf"
+            fi
+            ;;
+        help|--help|-h)
+            cat <<EOF
+iwt vm share - Manage shared folders between host and Windows VM
+
+Subcommands:
+  add <path> [opts]       Share a host directory with the VM
+  remove <name>           Remove a shared folder
+  list                    List shared folders
+  mount <name> <letter>   Map a share to a Windows drive letter
+  mount-all               Mount all shares from shares.conf
+  config [edit]           View/edit drive letter mappings
+
+Add options:
+  --name NAME             Share name (default: directory basename)
+  --drive LETTER          Auto-mount as this drive letter (e.g. P)
+  --vm NAME               Target VM (default: \$IWT_VM_NAME)
+
+Drive letter mounting requires WinFsp or VirtIO-FS in the guest.
+The guest tools installer (setup-guest-tools.ps1) installs WinFsp
+if the MSI is bundled in the image.
+
+Examples:
+  iwt vm share add ~/Projects --name projects --drive P
+  iwt vm share add /data/media --name media
+  iwt vm share list
+  iwt vm share mount media M
+  iwt vm share mount-all
+  iwt vm share remove projects
+  iwt vm share config edit
+EOF
+            ;;
+        *)
+            err "Unknown share subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
 # --- Profile commands ---
 
 cmd_profiles() {
@@ -714,7 +848,7 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
             ;;
         vm)
-            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot help" -- "$cur"))
+            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share help" -- "$cur"))
             ;;
         profiles)
             COMPREPLY=($(compgen -W "install list show diff help" -- "$cur"))
@@ -749,7 +883,7 @@ _iwt() {
         args)
             case $words[1] in
                 image)     _values 'subcommand' download build list help ;;
-                vm)        _values 'subcommand' create start stop status list rdp snapshot help ;;
+                vm)        _values 'subcommand' create start stop status list rdp snapshot share help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
                 config)    _values 'subcommand' init show edit path help ;;

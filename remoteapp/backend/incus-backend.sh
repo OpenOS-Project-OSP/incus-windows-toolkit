@@ -421,3 +421,235 @@ snapshot_schedule_disable() {
     ok "Auto-snapshot disabled for $IWT_VM_NAME"
 }
 
+# --- Shared folder management ---
+
+# Device name prefix for IWT-managed shares
+_IWT_SHARE_PREFIX="iwt-share-"
+
+share_add() {
+    local host_path="$1"
+    local share_name="${2:-}"
+    local drive_letter="${3:-}"
+
+    [[ -n "$host_path" ]] || die "Host path required"
+    [[ -d "$host_path" ]] || die "Host path does not exist: $host_path"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    # Resolve to absolute path
+    host_path=$(realpath "$host_path")
+
+    # Auto-generate share name from directory basename if not provided
+    if [[ -z "$share_name" ]]; then
+        share_name=$(basename "$host_path" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+    fi
+
+    local device_name="${_IWT_SHARE_PREFIX}${share_name}"
+
+    # Check if device already exists
+    if incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${device_name}:"; then
+        die "Share '$share_name' already exists on $IWT_VM_NAME. Remove it first."
+    fi
+
+    info "Adding shared folder: $host_path -> $share_name"
+    incus config device add "$IWT_VM_NAME" "$device_name" disk \
+        source="$host_path" \
+        path="/shared/${share_name}"
+
+    ok "Share added: $share_name ($host_path)"
+
+    # If VM is running and a drive letter was requested, mount it now
+    if [[ -n "$drive_letter" ]] && vm_is_running; then
+        share_mount_in_guest "$share_name" "$drive_letter"
+    elif [[ -n "$drive_letter" ]]; then
+        info "Drive letter $drive_letter will be mapped when the VM starts."
+        info "Run 'iwt vm share mount $share_name $drive_letter' after starting."
+    fi
+}
+
+share_remove() {
+    local share_name="$1"
+
+    [[ -n "$share_name" ]] || die "Share name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local device_name="${_IWT_SHARE_PREFIX}${share_name}"
+
+    if ! incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${device_name}:"; then
+        die "Share '$share_name' not found on $IWT_VM_NAME"
+    fi
+
+    # Unmount in guest first if VM is running
+    if vm_is_running; then
+        share_unmount_in_guest "$share_name" || true
+    fi
+
+    info "Removing shared folder: $share_name"
+    incus config device remove "$IWT_VM_NAME" "$device_name"
+    ok "Share removed: $share_name"
+}
+
+share_list() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+
+    local found=false
+    local current_device=""
+    local current_source=""
+    local current_path=""
+
+    # Parse YAML output for iwt-share- devices
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^${_IWT_SHARE_PREFIX}(.+):$ ]]; then
+            # Print previous device if any
+            if [[ -n "$current_device" ]]; then
+                printf "  %-15s %-40s %s\n" "$current_device" "$current_source" "$current_path"
+            fi
+            current_device="${BASH_REMATCH[1]}"
+            current_source=""
+            current_path=""
+            found=true
+        elif [[ "$line" =~ ^[[:space:]]+source:[[:space:]]+(.+)$ ]]; then
+            current_source="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]+path:[[:space:]]+(.+)$ ]]; then
+            current_path="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[a-zA-Z] && ! "$line" =~ ^${_IWT_SHARE_PREFIX} ]]; then
+            # New non-share device -- print last share if pending
+            if [[ -n "$current_device" ]]; then
+                printf "  %-15s %-40s %s\n" "$current_device" "$current_source" "$current_path"
+                current_device=""
+            fi
+        fi
+    done <<< "$devices"
+
+    # Print last device
+    if [[ -n "$current_device" ]]; then
+        printf "  %-15s %-40s %s\n" "$current_device" "$current_source" "$current_path"
+    fi
+
+    if [[ "$found" == false ]]; then
+        info "No shared folders on $IWT_VM_NAME"
+    fi
+}
+
+share_mount_in_guest() {
+    local share_name="$1"
+    local drive_letter="$2"
+
+    [[ -n "$share_name" ]] || die "Share name required"
+    [[ -n "$drive_letter" ]] || die "Drive letter required (e.g. S)"
+
+    if ! vm_is_running; then
+        die "VM '$IWT_VM_NAME' must be running to mount shares"
+    fi
+
+    # Normalize drive letter to uppercase single char
+    drive_letter=$(echo "$drive_letter" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z' | head -c1)
+    [[ -n "$drive_letter" ]] || die "Invalid drive letter"
+
+    info "Mounting share '$share_name' as ${drive_letter}: in guest"
+
+    # Try virtiofs mount via WinFsp first, fall back to net use for 9p/agent shares
+    incus exec "$IWT_VM_NAME" -- powershell -Command "
+        \$ErrorActionPreference = 'Stop'
+
+        # Method 1: Check if virtiofs tag is visible and WinFsp is installed
+        \$winfspDir = 'C:\Program Files\WinFsp'
+        \$virtiofsExe = 'C:\Program Files\VirtIO-FS\virtiofs.exe'
+
+        if ((Test-Path \$winfspDir) -and (Test-Path \$virtiofsExe)) {
+            Write-Host 'IWT: Mounting via VirtIO-FS + WinFsp'
+            # Create a WinFsp mount using virtiofs
+            & \$virtiofsExe -o uid=-1,gid=-1 -o volname=${share_name} ${drive_letter}:
+            if (\$LASTEXITCODE -eq 0) {
+                Write-Host 'IWT: Mounted ${share_name} as ${drive_letter}:'
+                exit 0
+            }
+        }
+
+        # Method 2: Use net use with the incus-agent share
+        \$agentShare = '\\\\localhost\\${share_name}'
+        try {
+            net use ${drive_letter}: \$agentShare /persistent:yes 2>\$null
+            Write-Host 'IWT: Mounted via net use as ${drive_letter}:'
+            exit 0
+        } catch {}
+
+        # Method 3: Use subst as a last resort (maps a local path)
+        \$localPath = 'C:\shared\\${share_name}'
+        if (Test-Path \$localPath) {
+            subst ${drive_letter}: \$localPath
+            Write-Host 'IWT: Mounted via subst as ${drive_letter}:'
+            exit 0
+        }
+
+        Write-Host 'IWT: WARNING - Could not mount share. WinFsp or VirtIO-FS may not be installed.'
+        exit 1
+    " || warn "Mount may have failed. Ensure WinFsp and VirtIO-FS are installed in the guest."
+
+    ok "Share '$share_name' mapped to ${drive_letter}: in guest"
+}
+
+share_unmount_in_guest() {
+    local share_name="$1"
+
+    if ! vm_is_running; then
+        return 0
+    fi
+
+    # Try to find and remove the drive mapping
+    incus exec "$IWT_VM_NAME" -- powershell -Command "
+        # Try net use removal
+        \$drives = net use 2>\$null | Select-String '${share_name}'
+        foreach (\$d in \$drives) {
+            \$letter = (\$d -split '\s+')[1]
+            if (\$letter -match '^[A-Z]:$') {
+                net use \$letter /delete /yes 2>\$null
+                Write-Host \"IWT: Unmounted \$letter\"
+            }
+        }
+
+        # Try subst removal
+        \$substs = subst 2>\$null | Select-String '${share_name}'
+        foreach (\$s in \$substs) {
+            \$letter = (\$s -split '=>')[0].Trim()
+            subst \$letter /d 2>\$null
+            Write-Host \"IWT: Removed subst \$letter\"
+        }
+    " 2>/dev/null || true
+}
+
+share_mount_all() {
+    # Mount all configured shares using the drive map config
+    local map_file="$IWT_ROOT/remoteapp/freedesktop/shares.conf"
+
+    if [[ ! -f "$map_file" ]]; then
+        info "No shares.conf found. Create one with 'iwt vm share config'."
+        return 0
+    fi
+
+    if ! vm_is_running; then
+        die "VM '$IWT_VM_NAME' must be running"
+    fi
+
+    local mounted=0
+    while IFS='|' read -r name drive_letter; do
+        [[ "$name" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$name" ]] && continue
+
+        share_mount_in_guest "$name" "$drive_letter"
+        mounted=$((mounted + 1))
+    done < "$map_file"
+
+    ok "Mounted $mounted shares"
+}
+

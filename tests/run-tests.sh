@@ -174,6 +174,29 @@ test_backend_snapshot_functions_exist() {
     declare -f snapshot_schedule_disable &>/dev/null
 }
 
+test_cli_vm_share_help() {
+    "$IWT_ROOT/cli/iwt.sh" vm share --help | grep -q "add"
+    "$IWT_ROOT/cli/iwt.sh" vm share --help | grep -q "mount"
+    "$IWT_ROOT/cli/iwt.sh" vm share --help | grep -q "remove"
+}
+
+test_cli_vm_help_mentions_share() {
+    "$IWT_ROOT/cli/iwt.sh" vm --help | grep -q "share"
+}
+
+test_backend_share_functions_exist() {
+    source "$IWT_ROOT/remoteapp/backend/incus-backend.sh"
+    declare -f share_add &>/dev/null
+    declare -f share_remove &>/dev/null
+    declare -f share_list &>/dev/null
+    declare -f share_mount_in_guest &>/dev/null
+    declare -f share_mount_all &>/dev/null
+}
+
+test_shares_conf_exists() {
+    [[ -f "$IWT_ROOT/remoteapp/freedesktop/shares.conf" ]]
+}
+
 test_apps_conf_format() {
     local conf="$IWT_ROOT/remoteapp/freedesktop/apps.conf"
     [[ -f "$conf" ]]
@@ -254,6 +277,10 @@ run_unit_tests() {
     run_test "CLI vm snapshot help"    test_cli_vm_snapshot_help
     run_test "CLI vm help has snapshot" test_cli_vm_help_mentions_snapshot
     run_test "Backend snapshot funcs"  test_backend_snapshot_functions_exist
+    run_test "CLI vm share help"       test_cli_vm_share_help
+    run_test "CLI vm help has share"   test_cli_vm_help_mentions_share
+    run_test "Backend share funcs"     test_backend_share_functions_exist
+    run_test "shares.conf exists"      test_shares_conf_exists
     run_test "apps.conf format"        test_apps_conf_format
 }
 

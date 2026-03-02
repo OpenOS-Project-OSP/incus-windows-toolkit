@@ -495,6 +495,94 @@ Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 # Disable hibernation (saves disk space in VM)
 & powercfg /hibernate off 2>$null
 
+# Create shared folder mount helper script
+$mountScript = @'
+# IWT Shared Folder Mount Helper
+# Run this to mount virtiofs/9p shares as drive letters.
+# Usage: iwt-mount-shares.ps1 [share_name] [drive_letter]
+#
+# Without arguments, reads C:\iwt\shares.conf for mappings.
+
+param(
+    [string]$ShareName,
+    [string]$DriveLetter
+)
+
+$logFile = "C:\iwt\mount.log"
+function Log($msg) {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$ts  $msg" | Tee-Object -FilePath $logFile -Append
+}
+
+function Mount-Share($name, $letter) {
+    $letter = $letter.ToUpper().TrimEnd(':')
+
+    # Skip if already mounted
+    if (Test-Path "${letter}:\") {
+        Log "IWT: ${letter}: already mounted, skipping"
+        return
+    }
+
+    # Try virtiofs
+    $virtiofsExe = "C:\Program Files\VirtIO-FS\virtiofs.exe"
+    if (Test-Path $virtiofsExe) {
+        Log "IWT: Mounting $name as ${letter}: via VirtIO-FS"
+        & $virtiofsExe -o "uid=-1,gid=-1" -o "volname=$name" "${letter}:" 2>$null
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+
+    # Try net use (agent share)
+    try {
+        net use "${letter}:" "\\localhost\$name" /persistent:yes 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Log "IWT: Mounted $name as ${letter}: via net use"
+            return
+        }
+    } catch {}
+
+    # Try subst (local path)
+    $localPath = "C:\shared\$name"
+    if (Test-Path $localPath) {
+        subst "${letter}:" $localPath
+        Log "IWT: Mounted $name as ${letter}: via subst"
+        return
+    }
+
+    Log "IWT: WARNING - Could not mount $name as ${letter}:"
+}
+
+if ($ShareName -and $DriveLetter) {
+    Mount-Share $ShareName $DriveLetter
+} else {
+    $confFile = "C:\iwt\shares.conf"
+    if (Test-Path $confFile) {
+        Get-Content $confFile | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -and -not $line.StartsWith('#')) {
+                $parts = $line -split '\|'
+                if ($parts.Count -ge 2) {
+                    Mount-Share $parts[0].Trim() $parts[1].Trim()
+                }
+            }
+        }
+    }
+}
+'@
+
+$mountScriptPath = Join-Path $PSScriptRoot "iwt-mount-shares.ps1"
+Set-Content -Path $mountScriptPath -Value $mountScript
+Log "IWT: Shared folder mount helper installed"
+
+# Register mount helper as a startup task so shares auto-mount on login
+$taskAction = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$mountScriptPath`""
+$taskTrigger = New-ScheduledTaskTrigger -AtLogOn
+$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "IWT-MountShares" -Action $taskAction `
+    -Trigger $taskTrigger -Settings $taskSettings `
+    -Description "Auto-mount IWT shared folders" -Force 2>$null
+Log "IWT: Auto-mount scheduled task registered"
+
 Log "IWT: Guest tools setup complete"
 PS1EOF
 
