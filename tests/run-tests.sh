@@ -227,6 +227,25 @@ test_gpu_setup_scripts_exist() {
     [[ -x "$IWT_ROOT/gpu/setup-looking-glass.sh" ]]
 }
 
+test_cli_vm_usb_help() {
+    "$IWT_ROOT/cli/iwt.sh" vm usb --help | grep -q "attach"
+    "$IWT_ROOT/cli/iwt.sh" vm usb --help | grep -q "detach"
+    "$IWT_ROOT/cli/iwt.sh" vm usb --help | grep -q "list-host"
+}
+
+test_cli_vm_help_mentions_usb() {
+    "$IWT_ROOT/cli/iwt.sh" vm --help | grep -q "usb"
+}
+
+test_backend_usb_functions_exist() {
+    source "$IWT_ROOT/remoteapp/backend/incus-backend.sh"
+    declare -f usb_attach &>/dev/null
+    declare -f usb_detach &>/dev/null
+    declare -f usb_detach_all &>/dev/null
+    declare -f usb_list_host &>/dev/null
+    declare -f usb_list_vm &>/dev/null
+}
+
 test_apps_conf_format() {
     local conf="$IWT_ROOT/remoteapp/freedesktop/apps.conf"
     [[ -f "$conf" ]]
@@ -316,6 +335,9 @@ run_unit_tests() {
     run_test "Backend gpu funcs"       test_backend_gpu_functions_exist
     run_test "GPU profiles validate"   test_gpu_profiles_validate
     run_test "GPU setup scripts exist" test_gpu_setup_scripts_exist
+    run_test "CLI vm usb help"         test_cli_vm_usb_help
+    run_test "CLI vm help has usb"     test_cli_vm_help_mentions_usb
+    run_test "Backend usb funcs"       test_backend_usb_functions_exist
     run_test "apps.conf format"        test_apps_conf_format
 }
 

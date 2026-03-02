@@ -867,3 +867,183 @@ looking_glass_launch() {
     looking-glass-client "${lg_args[@]}" "$@"
 }
 
+# --- USB device management ---
+
+# Device name prefix for IWT-managed USB devices
+_IWT_USB_PREFIX="iwt-usb-"
+
+usb_list_host() {
+    # List USB devices on the host
+    if command -v lsusb &>/dev/null; then
+        lsusb | while IFS= read -r line; do
+            # Format: Bus 001 Device 003: ID 046d:c52b Logitech, Inc. Unifying Receiver
+            local bus dev vid pid desc
+            bus=$(echo "$line" | grep -oP 'Bus \K[0-9]+')
+            dev=$(echo "$line" | grep -oP 'Device \K[0-9]+')
+            vid=$(echo "$line" | grep -oP 'ID \K[0-9a-f]{4}')
+            pid=$(echo "$line" | grep -oP 'ID [0-9a-f]{4}:\K[0-9a-f]{4}')
+            desc=$(echo "$line" | sed 's/.*ID [0-9a-f:]\+ //')
+            printf "  %-4s:%-4s  Bus %s Dev %s  %s\n" "$vid" "$pid" "$bus" "$dev" "$desc"
+        done
+    else
+        warn "lsusb not found. Install usbutils."
+        # Fallback: read from sysfs
+        for dev_dir in /sys/bus/usb/devices/[0-9]*-[0-9]*; do
+            [[ -f "$dev_dir/idVendor" ]] || continue
+            local vid pid product manufacturer
+            vid=$(cat "$dev_dir/idVendor" 2>/dev/null || echo "????")
+            pid=$(cat "$dev_dir/idProduct" 2>/dev/null || echo "????")
+            product=$(cat "$dev_dir/product" 2>/dev/null || echo "unknown")
+            manufacturer=$(cat "$dev_dir/manufacturer" 2>/dev/null || echo "")
+            printf "  %s:%s  %s %s\n" "$vid" "$pid" "$manufacturer" "$product"
+        done
+    fi
+}
+
+usb_list_vm() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+
+    local found=false
+    local current_device=""
+    local current_vid=""
+    local current_pid=""
+    local current_required=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^${_IWT_USB_PREFIX}(.+):$ ]]; then
+            if [[ -n "$current_device" ]]; then
+                local req_str="required"
+                [[ "$current_required" == "false" ]] && req_str="optional"
+                printf "  %-20s %s:%s  (%s)\n" "$current_device" "$current_vid" "$current_pid" "$req_str"
+            fi
+            current_device="${BASH_REMATCH[1]}"
+            current_vid=""
+            current_pid=""
+            current_required="true"
+            found=true
+        elif [[ "$line" =~ ^[[:space:]]+vendorid:[[:space:]]+(.+)$ ]]; then
+            current_vid="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]+productid:[[:space:]]+(.+)$ ]]; then
+            current_pid="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]+required:[[:space:]]+(.+)$ ]]; then
+            current_required="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[a-zA-Z] && ! "$line" =~ ^${_IWT_USB_PREFIX} ]]; then
+            if [[ -n "$current_device" ]]; then
+                local req_str="required"
+                [[ "$current_required" == "false" ]] && req_str="optional"
+                printf "  %-20s %s:%s  (%s)\n" "$current_device" "$current_vid" "$current_pid" "$req_str"
+                current_device=""
+            fi
+        fi
+    done <<< "$devices"
+
+    # Print last device
+    if [[ -n "$current_device" ]]; then
+        local req_str="required"
+        [[ "$current_required" == "false" ]] && req_str="optional"
+        printf "  %-20s %s:%s  (%s)\n" "$current_device" "$current_vid" "$current_pid" "$req_str"
+    fi
+
+    if [[ "$found" == false ]]; then
+        info "No USB devices attached to $IWT_VM_NAME"
+    fi
+}
+
+usb_attach() {
+    local vendor_id="${1:-}"
+    local product_id="${2:-}"
+    local device_name="${3:-}"
+    local required="${4:-true}"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    [[ -n "$vendor_id" ]] || die "Vendor ID required (e.g. 046d)"
+    [[ -n "$product_id" ]] || die "Product ID required (e.g. c52b)"
+
+    # Normalize: strip 0x prefix if present
+    vendor_id="${vendor_id#0x}"
+    product_id="${product_id#0x}"
+
+    # Auto-generate device name if not provided
+    if [[ -z "$device_name" ]]; then
+        device_name="${vendor_id}-${product_id}"
+    fi
+
+    local full_name="${_IWT_USB_PREFIX}${device_name}"
+
+    # Check if already attached
+    if incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${full_name}:"; then
+        die "USB device '$device_name' already attached. Detach first or use a different --name."
+    fi
+
+    info "Attaching USB device ${vendor_id}:${product_id} as '$device_name'"
+
+    incus config device add "$IWT_VM_NAME" "$full_name" usb \
+        vendorid="$vendor_id" \
+        productid="$product_id" \
+        required="$required"
+
+    if vm_is_running; then
+        ok "USB device hotplugged into running VM"
+    else
+        ok "USB device attached (will connect when VM starts)"
+    fi
+}
+
+usb_detach() {
+    local device_name="$1"
+
+    [[ -n "$device_name" ]] || die "Device name required"
+
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local full_name="${_IWT_USB_PREFIX}${device_name}"
+
+    if ! incus config device show "$IWT_VM_NAME" 2>/dev/null | grep -q "^${full_name}:"; then
+        die "USB device '$device_name' not found on $IWT_VM_NAME"
+    fi
+
+    info "Detaching USB device: $device_name"
+    incus config device remove "$IWT_VM_NAME" "$full_name"
+
+    if vm_is_running; then
+        ok "USB device hot-removed from running VM"
+    else
+        ok "USB device detached"
+    fi
+}
+
+usb_detach_all() {
+    if ! vm_exists; then
+        die "VM '$IWT_VM_NAME' does not exist"
+    fi
+
+    local devices
+    devices=$(incus config device show "$IWT_VM_NAME" 2>/dev/null)
+    local removed=0
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^(${_IWT_USB_PREFIX}.+):$ ]]; then
+            local full_name="${BASH_REMATCH[1]}"
+            info "Removing: $full_name"
+            incus config device remove "$IWT_VM_NAME" "$full_name"
+            removed=$((removed + 1))
+        fi
+    done <<< "$devices"
+
+    if [[ $removed -eq 0 ]]; then
+        info "No IWT USB devices to remove"
+    else
+        ok "Removed $removed USB device(s)"
+    fi
+}
+

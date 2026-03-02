@@ -301,6 +301,9 @@ cmd_vm() {
         gpu)
             cmd_vm_gpu "$@"
             ;;
+        usb)
+            cmd_vm_usb "$@"
+            ;;
         help|--help|-h)
             cat <<EOF
 iwt vm - Manage Windows VMs
@@ -315,6 +318,7 @@ Subcommands:
   snapshot <action>   Manage VM snapshots
   share <action>      Manage shared folders
   gpu <action>        Manage GPU passthrough
+  usb <action>        Manage USB device passthrough
 
 Create options:
   --name NAME         VM name (default: windows)
@@ -325,10 +329,10 @@ Create options:
 Example:
   iwt vm create --name win11 --image windows-modified.iso
   iwt vm rdp win11
+  iwt vm usb attach 046d c52b --name logitech
   iwt vm gpu attach --type physical --pci 0000:01:00.0
-  iwt vm gpu looking-glass
 
-Run 'iwt vm snapshot --help', 'iwt vm share --help', or 'iwt vm gpu --help' for details.
+Run 'iwt vm usb --help', 'iwt vm gpu --help', etc. for details.
 EOF
             ;;
         *)
@@ -669,6 +673,120 @@ EOF
     esac
 }
 
+cmd_vm_usb() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        attach)
+            local vendor_id=""
+            local product_id=""
+            local device_name=""
+            local required="true"
+            local vm_name=""
+
+            # First two positional args are vendor_id and product_id
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --name)     device_name="$2"; shift 2 ;;
+                    --optional) required="false"; shift ;;
+                    --vm)       vm_name="$2"; shift 2 ;;
+                    -*)         err "Unknown option: $1"; exit 1 ;;
+                    *)
+                        if [[ -z "$vendor_id" ]]; then
+                            vendor_id="$1"
+                        elif [[ -z "$product_id" ]]; then
+                            product_id="$1"
+                        else
+                            err "Unexpected argument: $1"; exit 1
+                        fi
+                        shift
+                        ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+
+            # Support vendor:product shorthand (e.g. 046d:c52b)
+            if [[ "$vendor_id" == *:* && -z "$product_id" ]]; then
+                product_id="${vendor_id##*:}"
+                vendor_id="${vendor_id%%:*}"
+            fi
+
+            [[ -n "$vendor_id" && -n "$product_id" ]] || \
+                die "Usage: iwt vm usb attach <vendor_id> <product_id> [--name NAME] [--optional]"
+
+            usb_attach "$vendor_id" "$product_id" "$device_name" "$required"
+            ;;
+        detach)
+            local device_name=""
+            local vm_name=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --vm)  vm_name="$2"; shift 2 ;;
+                    --all) [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+                           usb_detach_all; return ;;
+                    -*)    err "Unknown option: $1"; exit 1 ;;
+                    *)     device_name="$1"; shift ;;
+                esac
+            done
+
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+            [[ -n "$device_name" ]] || die "Usage: iwt vm usb detach <name> [--vm NAME] or --all"
+            usb_detach "$device_name"
+            ;;
+        list)
+            local vm_name=""
+            [[ "${1:-}" == "--vm" ]] && { vm_name="$2"; shift 2; }
+            [[ -n "${1:-}" && "${1:-}" != -* ]] && { vm_name="$1"; shift; }
+            [[ -n "$vm_name" ]] && IWT_VM_NAME="$vm_name"
+
+            bold "USB devices on $IWT_VM_NAME:"
+            printf "  %-20s %-10s %s\n" "NAME" "ID" "MODE"
+            printf "  %-20s %-10s %s\n" "----" "--" "----"
+            usb_list_vm
+            ;;
+        list-host)
+            bold "USB devices on host:"
+            usb_list_host
+            ;;
+        help|--help|-h)
+            cat <<EOF
+iwt vm usb - Manage USB device passthrough
+
+USB devices support hotplugging -- attach and detach while the VM is running.
+
+Subcommands:
+  attach <vid> <pid>      Attach a USB device by vendor:product ID
+  detach <name>           Detach a USB device
+  detach --all            Detach all IWT USB devices
+  list                    List USB devices attached to the VM
+  list-host               List USB devices on the host
+
+Attach options:
+  <vid> <pid>             Vendor and product ID (hex, e.g. 046d c52b)
+  <vid:pid>               Shorthand (e.g. 046d:c52b)
+  --name NAME             Device name (default: vid-pid)
+  --optional              Don't block VM start if device is missing
+  --vm NAME               Target VM
+
+Examples:
+  iwt vm usb list-host
+  iwt vm usb attach 046d:c52b --name logitech-receiver
+  iwt vm usb attach 0bda 8153 --name usb-ethernet --optional
+  iwt vm usb list
+  iwt vm usb detach logitech-receiver
+  iwt vm usb detach --all
+EOF
+            ;;
+        *)
+            err "Unknown usb subcommand: $subcmd"
+            exit 1
+            ;;
+    esac
+}
+
 cmd_vm_gpu() {
     local subcmd="${1:-help}"
     shift || true
@@ -985,7 +1103,7 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
             ;;
         vm)
-            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu help" -- "$cur"))
+            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu usb help" -- "$cur"))
             ;;
         profiles)
             COMPREPLY=($(compgen -W "install list show diff help" -- "$cur"))
@@ -1020,7 +1138,7 @@ _iwt() {
         args)
             case $words[1] in
                 image)     _values 'subcommand' download build list help ;;
-                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu help ;;
+                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu usb help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
                 config)    _values 'subcommand' init show edit path help ;;
