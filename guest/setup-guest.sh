@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Set up a running Windows VM with guest tools, WinFsp, and VirtIO drivers.
+# Set up a running Windows VM with guest tools, WinFsp, WinBtrfs, and VirtIO drivers.
 #
 # Orchestrates installation of all guest-side components needed for
-# full Incus integration (shared folders, agent, balloon, serial).
+# full Incus integration (shared folders, agent, balloon, serial, Btrfs volumes).
 #
 # Usage:
 #   setup-guest.sh [options]
 #
 # Options:
-#   --vm NAME           Target VM (default: $IWT_VM_NAME)
-#   --install-winfsp    Install WinFsp for filesystem passthrough
-#   --install-virtio    Install VirtIO guest tools (balloon, serial, QEMU agent)
-#   --all               Install everything
-#   --check             Only check status, don't install anything
-#   --help              Show this help
+#   --vm NAME             Target VM (default: $IWT_VM_NAME)
+#   --install-winfsp      Install WinFsp for filesystem passthrough
+#   --install-virtio      Install VirtIO guest tools (balloon, serial, QEMU agent)
+#   --install-winbtrfs    Install WinBtrfs driver (enables Btrfs volumes in guest)
+#   --all                 Install everything
+#   --check               Only check status, don't install anything
+#   --help                Show this help
 
 set -euo pipefail
 
@@ -25,6 +26,7 @@ load_config
 
 INSTALL_WINFSP=false
 INSTALL_VIRTIO=false
+INSTALL_WINBTRFS=false
 CHECK_ONLY=false
 
 # --- Argument parsing ---
@@ -32,11 +34,12 @@ CHECK_ONLY=false
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --vm)              IWT_VM_NAME="$2"; shift 2 ;;
-            --install-winfsp)  INSTALL_WINFSP=true; shift ;;
-            --install-virtio)  INSTALL_VIRTIO=true; shift ;;
-            --all)             INSTALL_WINFSP=true; INSTALL_VIRTIO=true; shift ;;
-            --check)           CHECK_ONLY=true; shift ;;
+            --vm)                IWT_VM_NAME="$2"; shift 2 ;;
+            --install-winfsp)    INSTALL_WINFSP=true; shift ;;
+            --install-virtio)    INSTALL_VIRTIO=true; shift ;;
+            --install-winbtrfs)  INSTALL_WINBTRFS=true; shift ;;
+            --all)               INSTALL_WINFSP=true; INSTALL_VIRTIO=true; INSTALL_WINBTRFS=true; shift ;;
+            --check)             CHECK_ONLY=true; shift ;;
             --help|-h)
                 sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
                 exit 0
@@ -46,9 +49,10 @@ parse_args() {
     done
 
     # Default to --all if no specific component requested
-    if [[ "$INSTALL_WINFSP" == false && "$INSTALL_VIRTIO" == false && "$CHECK_ONLY" == false ]]; then
+    if [[ "$INSTALL_WINFSP" == false && "$INSTALL_VIRTIO" == false && "$INSTALL_WINBTRFS" == false && "$CHECK_ONLY" == false ]]; then
         INSTALL_WINFSP=true
         INSTALL_VIRTIO=true
+        INSTALL_WINBTRFS=true
     fi
 }
 
@@ -78,6 +82,11 @@ check_guest_status() {
                            (Test-Path "C:\Program Files\Virtio-Win\VirtIO-FS\virtiofs.exe")
         $virtioFsSvc = Get-Service -Name "VirtioFsSvc" -ErrorAction SilentlyContinue
         $result.VirtioFSService = if ($virtioFsSvc) { $virtioFsSvc.Status.ToString() } else { "NotInstalled" }
+
+        # WinBtrfs
+        $result.WinBtrfs = (Test-Path "C:\Windows\System32\drivers\btrfs.sys")
+        $btrfsSvc = Get-Service -Name "btrfs" -ErrorAction SilentlyContinue
+        $result.WinBtrfsService = if ($btrfsSvc) { $btrfsSvc.Status.ToString() } else { "NotInstalled" }
 
         # RDP
         $rdpEnabled = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -ErrorAction SilentlyContinue).fDenyTSConnections
@@ -135,6 +144,8 @@ display_status() {
     check_field "WinFspService" "WinFsp Launcher"
     check_field "VirtioFS" "VirtIO-FS Driver"
     check_field "VirtioFSService" "VirtIO-FS Service"
+    check_field "WinBtrfs" "WinBtrfs Driver"
+    check_field "WinBtrfsService" "WinBtrfs Service"
 }
 
 # --- VirtIO guest tools installation ---
@@ -224,6 +235,17 @@ main() {
             ok "WinFsp already installed, skipping"
         else
             "$SCRIPT_DIR/setup-winfsp.sh" --vm "$IWT_VM_NAME"
+        fi
+    fi
+
+    # Install WinBtrfs
+    if [[ "$INSTALL_WINBTRFS" == true ]]; then
+        local has_winbtrfs
+        has_winbtrfs=$(echo "$status_json" | jq -r '.WinBtrfs // false')
+        if [[ "$has_winbtrfs" == "true" || "$has_winbtrfs" == "True" ]]; then
+            ok "WinBtrfs already installed, skipping"
+        else
+            "$SCRIPT_DIR/setup-winbtrfs.sh" --vm "$IWT_VM_NAME"
         fi
     fi
 

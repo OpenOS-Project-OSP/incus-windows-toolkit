@@ -37,7 +37,7 @@ iwt - Incus Windows Toolkit v${VERSION}
 Usage: iwt <command> [subcommand] [options]
 
 Commands:
-  image       Build and manage Windows VM images
+  image       Build, pack, and manage Windows VM images
   vm          Create, start, stop, and manage Windows VMs
   apps        Windows app store (install app bundles via winget)
   cloud       Sync backups to cloud storage (S3, B2, rclone)
@@ -128,6 +128,51 @@ cmd_doctor() {
         fi
     fi
 
+    # --- Btrfs checks ---
+    echo ""
+    info "Btrfs storage (IWT_STORAGE_BACKEND=${IWT_STORAGE_BACKEND:-btrfs}):"
+    if check_btrfs_host; then
+        ok "  Btrfs kernel module"
+        ok_count=$((ok_count + 1))
+    else
+        warn "  Btrfs kernel module not loaded (run: modprobe btrfs)"
+        failed_cmds+=(btrfs-module)
+    fi
+    if check_btrfs_progs; then
+        ok "  btrfs-progs (btrfs, mkfs.btrfs)"
+        ok_count=$((ok_count + 1))
+    else
+        err "  btrfs-progs not found"
+        fail_count=$((fail_count + 1))
+        failed_cmds+=(btrfs)
+    fi
+    if incus storage list --format csv 2>/dev/null | grep -q ',btrfs,'; then
+        ok "  Incus btrfs pool exists"
+        ok_count=$((ok_count + 1))
+    else
+        info "  No Incus btrfs pool yet (create with: iwt vm storage create-pool)"
+    fi
+
+    # --- DwarFS checks ---
+    echo ""
+    info "DwarFS image format (IWT_IMAGE_FORMAT=${IWT_IMAGE_FORMAT:-dwarfs}):"
+    if check_dwarfs_host; then
+        ok "  DwarFS tools (mkdwarfs, dwarfs, dwarfsextract)"
+        ok_count=$((ok_count + 1))
+    else
+        err "  DwarFS tools not found"
+        fail_count=$((fail_count + 1))
+        failed_cmds+=(mkdwarfs)
+    fi
+    if check_fuse_host; then
+        ok "  FUSE (/dev/fuse + fusermount)"
+        ok_count=$((ok_count + 1))
+    else
+        err "  FUSE not available (needed for DwarFS share mounts)"
+        fail_count=$((fail_count + 1))
+        failed_cmds+=(fusermount)
+    fi
+
     echo ""
     info "Results: $ok_count passed, $fail_count failed"
 
@@ -214,40 +259,55 @@ cmd_image() {
         list)
             exec "$IWT_ROOT/image-pipeline/scripts/download-iso.sh" --list-versions
             ;;
+        pack)
+            exec "$IWT_ROOT/storage/setup-dwarfs.sh" pack "$@"
+            ;;
+        unpack)
+            exec "$IWT_ROOT/storage/setup-dwarfs.sh" unpack "$@"
+            ;;
         help|--help|-h)
             cat <<EOF
-iwt image - Build and download Windows images for Incus
+iwt image - Build, pack, and download Windows images for Incus
 
 Subcommands:
   download    Download a Windows ISO from Microsoft
   build       Build an Incus-ready image from an ISO
-  drivers     Download and manage VirtIO drivers
+  drivers     Download and manage VirtIO drivers and WinBtrfs
+  pack        Pack a built image into a compressed .dwarfs archive
+  unpack      Extract a .dwarfs archive to a directory
   list        List available Windows versions
 
 Download options:
-  --version VER       10 | 11 | server-2022 | server-2025 (default: 11)
-  --lang LANG         Language (default: "English (United States)")
-  --arch ARCH         x86_64 | arm64 (default: auto-detect)
-  --output-dir DIR    Download directory (default: current directory)
-  --list-langs        List available languages for a version
+  --version VER         10 | 11 | server-2022 | server-2025 (default: 11)
+  --lang LANG           Language (default: "English (United States)")
+  --arch ARCH           x86_64 | arm64 (default: auto-detect)
+  --output-dir DIR      Download directory (default: current directory)
+  --list-langs          List available languages for a version
 
 Build options:
-  --iso PATH          Path to Windows ISO (required)
-  --arch ARCH         x86_64 | arm64 (default: auto-detect)
-  --edition EDITION   Windows edition (default: Pro)
-  --slim              Strip bloatware (tiny11-style)
-  --output PATH       Output image path
-  --inject-drivers    Inject VirtIO + platform drivers
-  --woa-drivers PATH  WOA driver directory (ARM only)
-  --size SIZE         Disk size (default: 64G)
-  --keep-work         Preserve work directory for debugging
+  --iso PATH            Path to Windows ISO (required)
+  --arch ARCH           x86_64 | arm64 (default: auto-detect)
+  --edition EDITION     Windows edition (default: Pro)
+  --slim                Strip bloatware (tiny11-style)
+  --output PATH         Output image path
+  --inject-drivers      Inject VirtIO + platform drivers
+  --inject-winbtrfs     Inject WinBtrfs driver (default: IWT_INJECT_WINBTRFS)
+  --woa-drivers PATH    WOA driver directory (ARM only)
+  --size SIZE           Disk size (default: 64G)
+  --keep-work           Preserve work directory for debugging
+
+Pack/Unpack options:
+  --source PATH         Source directory or .qcow2 / .dwarfs file (required)
+  --output PATH         Output path
+  --level N             DwarFS compression level 1-9 (default: 7)
 
 Examples:
   iwt image list
-  iwt image download --version 11 --lang "English (United States)"
-  iwt image download --version server-2022
-  iwt image download --version 11 --arch arm64
-  iwt image build --iso Win11_24H2.iso --slim
+  iwt image download --version 11
+  iwt image build --iso Win11_24H2.iso --slim --inject-drivers --inject-winbtrfs
+  iwt image pack --source windows-x86_64.qcow2
+  iwt image unpack --source windows-x86_64.dwarfs
+  iwt image drivers winbtrfs download
 EOF
             ;;
         *)
@@ -320,6 +380,9 @@ cmd_vm() {
         setup-guest)
             exec "$IWT_ROOT/guest/setup-guest.sh" "$@"
             ;;
+        storage)
+            cmd_vm_storage "$@"
+            ;;
         template)
             cmd_vm_template "$@"
             ;;
@@ -354,7 +417,8 @@ Subcommands:
   status [name]       Show VM status
   list                List all Incus VMs
   rdp [name]          Open full RDP desktop session
-  setup-guest [opts]  Install guest tools (WinFsp, VirtIO) in a running VM
+  setup-guest [opts]  Install guest tools (WinFsp, VirtIO, WinBtrfs) in a running VM
+  storage <action>    Manage Btrfs storage pools and DwarFS shares
   template <action>   List and inspect VM templates/presets
   backup <action>     Backup and restore VMs
   export [name]       Publish VM as reusable Incus image
@@ -376,11 +440,12 @@ Create options:
   --disk PATH         Path to QCOW2 disk image
 
 Setup-guest options:
-  --all               Install everything (default)
-  --install-winfsp    Install WinFsp only
-  --install-virtio    Install VirtIO guest tools only
-  --check             Only check status, don't install
-  --vm NAME           Target VM
+  --all                 Install everything (default)
+  --install-winfsp      Install WinFsp only
+  --install-virtio      Install VirtIO guest tools only
+  --install-winbtrfs    Install WinBtrfs driver only
+  --check               Only check status, don't install
+  --vm NAME             Target VM
 
 Example:
   iwt vm create --template gaming --name my-gaming-vm
@@ -397,6 +462,58 @@ EOF
         *)
             err "Unknown vm subcommand: $subcmd"
             exit 1
+            ;;
+    esac
+}
+
+# --- VM storage subcommand ---
+
+cmd_vm_storage() {
+    local subcmd="${1:-help}"
+    shift || true
+
+    case "$subcmd" in
+        create-pool|attach-btrfs|detach-btrfs|list-pools|check)
+            exec "$IWT_ROOT/storage/setup-btrfs-pool.sh" "$subcmd" "$@"
+            ;;
+        mount-share|umount-share|list-shares)
+            exec "$IWT_ROOT/storage/setup-dwarfs.sh" "$subcmd" "$@"
+            ;;
+        dwarfs-check)
+            exec "$IWT_ROOT/storage/setup-dwarfs.sh" check "$@"
+            ;;
+        help|--help|-h)
+            cat <<EOF
+iwt vm storage - Manage Btrfs storage pools and DwarFS shared folders
+
+Btrfs subcommands:
+  create-pool     Create a Btrfs-backed Incus storage pool
+  attach-btrfs    Pass a Btrfs block device/image through to a VM
+  detach-btrfs    Remove a Btrfs block device from a VM
+  list-pools      List Incus storage pools and Btrfs status
+  check           Check host Btrfs support
+
+DwarFS subcommands:
+  mount-share     Mount a .dwarfs archive and expose it to a VM via virtiofs
+  umount-share    Unmount a DwarFS virtiofs share
+  list-shares     List active DwarFS mounts
+  dwarfs-check    Check host DwarFS tool availability
+
+Examples:
+  iwt vm storage create-pool
+  iwt vm storage create-pool --path /mnt/btrfs
+  iwt vm storage attach-btrfs --vm win11 --device /dev/sdb
+  iwt vm storage attach-btrfs --vm win11 --device /data/shared.img --name data
+  iwt vm storage detach-btrfs --vm win11 --name data
+  iwt vm storage mount-share --archive games.dwarfs --vm win11
+  iwt vm storage umount-share --name games --vm win11
+  iwt vm storage list-shares
+  iwt vm storage check
+EOF
+            ;;
+        *)
+            err "Unknown storage subcommand: $subcmd"
+            exec "$IWT_ROOT/storage/setup-btrfs-pool.sh" help
             ;;
     esac
 }
@@ -1480,10 +1597,10 @@ _iwt_completions() {
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
             ;;
         image)
-            COMPREPLY=($(compgen -W "download build list help" -- "$cur"))
+            COMPREPLY=($(compgen -W "download build drivers pack unpack list help" -- "$cur"))
             ;;
         vm)
-            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu usb net help" -- "$cur"))
+            COMPREPLY=($(compgen -W "create start stop status list rdp snapshot share gpu usb net setup-guest storage template backup export import first-boot monitor harden help" -- "$cur"))
             ;;
         profiles)
             COMPREPLY=($(compgen -W "install list show diff help" -- "$cur"))
@@ -1517,8 +1634,8 @@ _iwt() {
         cmd) _describe 'command' commands ;;
         args)
             case $words[1] in
-                image)     _values 'subcommand' download build list help ;;
-                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu usb net help ;;
+                image)     _values 'subcommand' download build drivers pack unpack list help ;;
+                vm)        _values 'subcommand' create start stop status list rdp snapshot share gpu usb net setup-guest storage template backup export import first-boot monitor harden help ;;
                 profiles)  _values 'subcommand' install list show diff help ;;
                 remoteapp) _values 'subcommand' launch install discover config help ;;
                 config)    _values 'subcommand' init show edit path help ;;

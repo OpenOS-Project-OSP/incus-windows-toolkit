@@ -93,6 +93,31 @@ suggest_install() {
         shellcheck)
             pkg="shellcheck"
             ;;
+        btrfs)
+            pkg="btrfs-progs (Debian/Ubuntu) or btrfs-progs (Fedora/RHEL)"
+            note="Required for Btrfs storage pool management"
+            ;;
+        mkfs.btrfs)
+            pkg="btrfs-progs (Debian/Ubuntu) or btrfs-progs (Fedora/RHEL)"
+            ;;
+        mkdwarfs)
+            pkg="dwarfs-tools"
+            note="See https://github.com/mhx/dwarfs/releases for pre-built packages"
+            ;;
+        dwarfs)
+            pkg="dwarfs-tools (provides dwarfs FUSE driver)"
+            note="See https://github.com/mhx/dwarfs/releases"
+            ;;
+        dwarfsextract)
+            pkg="dwarfs-tools (provides dwarfsextract)"
+            note="See https://github.com/mhx/dwarfs/releases"
+            ;;
+        fusermount|fusermount3)
+            pkg="fuse (Debian/Ubuntu) or fuse3 (Fedora/RHEL)"
+            ;;
+        unzip)
+            pkg="unzip"
+            ;;
         *)
             pkg="$cmd"
             ;;
@@ -102,6 +127,49 @@ suggest_install() {
     if [[ -n "$note" ]]; then
         err "         $note"
     fi
+}
+
+# --- Btrfs host helpers ---
+
+# Returns 0 if the host kernel has Btrfs support, 1 otherwise.
+check_btrfs_host() {
+    modinfo btrfs &>/dev/null || lsmod | grep -q '^btrfs'
+}
+
+# Returns 0 if btrfs-progs are installed.
+check_btrfs_progs() {
+    command -v btrfs &>/dev/null && command -v mkfs.btrfs &>/dev/null
+}
+
+# Returns the Btrfs filesystem UUID for a given path, or empty string.
+btrfs_uuid() {
+    local path="$1"
+    btrfs filesystem show "$path" 2>/dev/null | grep -oP '(?<=uuid: )[a-f0-9-]+' | head -1 || true
+}
+
+# Create a Btrfs subvolume if it doesn't already exist.
+# Usage: btrfs_ensure_subvol /path/to/subvol
+btrfs_ensure_subvol() {
+    local path="$1"
+    if [[ -d "$path" ]] && btrfs subvolume show "$path" &>/dev/null; then
+        return 0  # already a subvolume
+    fi
+    sudo btrfs subvolume create "$path"
+}
+
+# --- DwarFS host helpers ---
+
+# Returns 0 if all required DwarFS tools are present.
+check_dwarfs_host() {
+    command -v mkdwarfs      &>/dev/null && \
+    command -v dwarfs        &>/dev/null && \
+    command -v dwarfsextract &>/dev/null
+}
+
+# Returns 0 if FUSE is available for DwarFS mounts.
+check_fuse_host() {
+    [[ -e /dev/fuse ]] && \
+    { command -v fusermount &>/dev/null || command -v fusermount3 &>/dev/null; }
 }
 
 # --- Retry logic ---
@@ -193,8 +261,28 @@ IWT_RDP_PASS=
 # Default disk size for new images
 IWT_DISK_SIZE=64G
 
-# VirtIO driver cache directory (avoids re-downloading)
+# Driver/asset cache directory (avoids re-downloading)
 IWT_CACHE_DIR=$HOME/.cache/iwt
+
+# Storage backend for Incus pools.
+# btrfs: create Btrfs-backed pools for copy-on-write snapshots (recommended)
+# dir:   plain directory pool (Incus default)
+IWT_STORAGE_BACKEND=btrfs
+
+# Name of the default Incus storage pool IWT creates/uses.
+IWT_STORAGE_POOL=iwt-btrfs
+
+# Image archive format produced by 'iwt image build'.
+# dwarfs: pack output into a compressed .dwarfs archive (recommended, saves ~60-70%)
+# qcow2:  leave as a raw QCOW2 disk image
+IWT_IMAGE_FORMAT=dwarfs
+
+# DwarFS compression level (1=fastest, 9=smallest). Default 7 balances size/speed.
+IWT_DWARFS_COMPRESS_LEVEL=7
+
+# Inject WinBtrfs driver into images built with 'iwt image build'.
+# Enables Windows guests to mount Btrfs volumes passed through from the host.
+IWT_INJECT_WINBTRFS=true
 EOF
 
     ok "Config created: $IWT_CONFIG_FILE"

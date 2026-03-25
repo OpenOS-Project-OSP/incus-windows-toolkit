@@ -399,6 +399,358 @@ test_cli_vm_setup_guest_dispatch() {
     grep -q 'guest/setup-guest' "$IWT_ROOT/cli/iwt.sh"
 }
 
+# --- WinBtrfs tests ---
+
+test_winbtrfs_setup_script_exists() {
+    [[ -x "$IWT_ROOT/guest/setup-winbtrfs.sh" ]]
+}
+
+test_winbtrfs_setup_help() {
+    local output
+    output=$("$IWT_ROOT/guest/setup-winbtrfs.sh" --help 2>&1)
+    echo "$output" | grep -q 'WinBtrfs'
+    echo "$output" | grep -q '\-\-vm'
+    echo "$output" | grep -q '\-\-version'
+    echo "$output" | grep -q '\-\-check'
+}
+
+test_winbtrfs_setup_has_check_function() {
+    grep -q 'winbtrfs_check()' "$IWT_ROOT/guest/setup-winbtrfs.sh"
+}
+
+test_winbtrfs_setup_has_install_function() {
+    grep -q 'winbtrfs_install()' "$IWT_ROOT/guest/setup-winbtrfs.sh"
+}
+
+test_winbtrfs_setup_has_url_resolver() {
+    grep -q 'winbtrfs_get_download_url()' "$IWT_ROOT/guest/setup-winbtrfs.sh"
+}
+
+test_winbtrfs_setup_uses_github_api() {
+    grep -q 'maharmstone/btrfs' "$IWT_ROOT/guest/setup-winbtrfs.sh"
+}
+
+test_winbtrfs_setup_has_secureboot_note() {
+    grep -q 'Secure Boot' "$IWT_ROOT/guest/setup-winbtrfs.sh"
+}
+
+test_guest_setup_has_winbtrfs_flag() {
+    local output
+    output=$("$IWT_ROOT/guest/setup-guest.sh" --help 2>&1)
+    echo "$output" | grep -q 'install-winbtrfs'
+}
+
+test_guest_setup_all_includes_winbtrfs() {
+    grep -q 'INSTALL_WINBTRFS=true' "$IWT_ROOT/guest/setup-guest.sh"
+}
+
+test_guest_setup_status_checks_winbtrfs() {
+    grep -q 'WinBtrfs' "$IWT_ROOT/guest/setup-guest.sh"
+    grep -q 'btrfs\.sys' "$IWT_ROOT/guest/setup-guest.sh"
+}
+
+test_guest_setup_calls_winbtrfs_script() {
+    grep -q 'setup-winbtrfs.sh' "$IWT_ROOT/guest/setup-guest.sh"
+}
+
+test_build_image_has_inject_winbtrfs_flag() {
+    grep -q '\-\-inject-winbtrfs' "$IWT_ROOT/image-pipeline/scripts/build-image.sh"
+}
+
+test_build_image_has_inject_winbtrfs_function() {
+    grep -q 'inject_winbtrfs_driver()' "$IWT_ROOT/image-pipeline/scripts/build-image.sh"
+}
+
+test_build_image_calls_inject_winbtrfs() {
+    grep -q 'inject_winbtrfs_driver' "$IWT_ROOT/image-pipeline/scripts/build-image.sh"
+}
+
+test_build_image_winbtrfs_respects_env_var() {
+    grep -q 'IWT_INJECT_WINBTRFS' "$IWT_ROOT/image-pipeline/scripts/build-image.sh"
+}
+
+test_manage_drivers_has_winbtrfs_subcommand() {
+    local output
+    output=$("$IWT_ROOT/image-pipeline/scripts/manage-drivers.sh" help 2>&1)
+    echo "$output" | grep -q 'winbtrfs'
+}
+
+test_manage_drivers_winbtrfs_download_help() {
+    local output
+    output=$("$IWT_ROOT/image-pipeline/scripts/manage-drivers.sh" winbtrfs help 2>&1)
+    echo "$output" | grep -q 'download'
+    echo "$output" | grep -q 'list'
+    echo "$output" | grep -q 'verify'
+    echo "$output" | grep -q 'clean'
+}
+
+test_manage_drivers_winbtrfs_uses_github_api() {
+    grep -q 'maharmstone/btrfs' "$IWT_ROOT/image-pipeline/scripts/manage-drivers.sh"
+}
+
+test_cli_image_help_mentions_winbtrfs() {
+    local output
+    output=$("$IWT_ROOT/cli/iwt.sh" image help 2>&1)
+    echo "$output" | grep -q 'inject-winbtrfs'
+}
+
+# --- Btrfs storage pool tests ---
+
+test_btrfs_pool_script_exists() {
+    [[ -x "$IWT_ROOT/storage/setup-btrfs-pool.sh" ]]
+}
+
+test_btrfs_pool_script_has_shebang() {
+    local first_line
+    first_line=$(head -1 "$IWT_ROOT/storage/setup-btrfs-pool.sh")
+    [[ "$first_line" == "#!/usr/bin/env bash" ]]
+}
+
+test_btrfs_pool_usage() {
+    local output
+    output=$("$IWT_ROOT/storage/setup-btrfs-pool.sh" help 2>&1)
+    echo "$output" | grep -q 'create-pool'
+    echo "$output" | grep -q 'attach-btrfs'
+    echo "$output" | grep -q 'detach-btrfs'
+    echo "$output" | grep -q 'list-pools'
+    echo "$output" | grep -q 'check'
+}
+
+test_btrfs_pool_has_create_function() {
+    grep -q 'cmd_create_pool()' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_btrfs_pool_has_attach_function() {
+    grep -q 'cmd_attach_btrfs()' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_btrfs_pool_has_detach_function() {
+    grep -q 'cmd_detach_btrfs()' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_btrfs_pool_has_check_function() {
+    grep -q 'cmd_check()' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_btrfs_pool_uses_incus_storage() {
+    grep -q 'incus storage' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_btrfs_pool_attach_uses_incus_device() {
+    grep -q 'incus config device add' "$IWT_ROOT/storage/setup-btrfs-pool.sh"
+}
+
+test_cli_vm_storage_dispatch() {
+    grep -q 'storage)' "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'cmd_vm_storage' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_cli_vm_storage_help() {
+    local output
+    output=$("$IWT_ROOT/cli/iwt.sh" vm storage help 2>&1)
+    echo "$output" | grep -q 'create-pool'
+    echo "$output" | grep -q 'attach-btrfs'
+    echo "$output" | grep -q 'mount-share'
+}
+
+test_cli_vm_help_mentions_storage() {
+    local output
+    output=$("$IWT_ROOT/cli/iwt.sh" vm help 2>&1)
+    echo "$output" | grep -q 'storage'
+}
+
+# --- DwarFS tests ---
+
+test_dwarfs_script_exists() {
+    [[ -x "$IWT_ROOT/storage/setup-dwarfs.sh" ]]
+}
+
+test_dwarfs_script_has_shebang() {
+    local first_line
+    first_line=$(head -1 "$IWT_ROOT/storage/setup-dwarfs.sh")
+    [[ "$first_line" == "#!/usr/bin/env bash" ]]
+}
+
+test_dwarfs_usage() {
+    local output
+    output=$("$IWT_ROOT/storage/setup-dwarfs.sh" help 2>&1)
+    echo "$output" | grep -q 'pack'
+    echo "$output" | grep -q 'unpack'
+    echo "$output" | grep -q 'mount-share'
+    echo "$output" | grep -q 'umount-share'
+    echo "$output" | grep -q 'list-shares'
+    echo "$output" | grep -q 'check'
+}
+
+test_dwarfs_has_pack_function() {
+    grep -q 'cmd_pack()' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_has_unpack_function() {
+    grep -q 'cmd_unpack()' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_has_mount_function() {
+    grep -q 'cmd_mount_share()' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_has_umount_function() {
+    grep -q 'cmd_umount_share()' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_has_check_function() {
+    grep -q 'cmd_check()' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_pack_requires_source() {
+    ! "$IWT_ROOT/storage/setup-dwarfs.sh" pack 2>/dev/null
+}
+
+test_dwarfs_unpack_requires_source() {
+    ! "$IWT_ROOT/storage/setup-dwarfs.sh" unpack 2>/dev/null
+}
+
+test_dwarfs_pack_uses_mkdwarfs() {
+    grep -q 'mkdwarfs' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_unpack_uses_dwarfsextract() {
+    grep -q 'dwarfsextract' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_mount_uses_fuse() {
+    grep -q 'dwarfs.*FUSE\|FUSE.*dwarfs\|dwarfs "\$archive"' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_mount_attaches_virtiofs() {
+    grep -q 'incus config device add' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_dwarfs_check_lists_tools() {
+    grep -q 'mkdwarfs' "$IWT_ROOT/storage/setup-dwarfs.sh"
+    grep -q 'dwarfsextract' "$IWT_ROOT/storage/setup-dwarfs.sh"
+    grep -q 'fusermount' "$IWT_ROOT/storage/setup-dwarfs.sh"
+}
+
+test_cli_image_pack_dispatch() {
+    grep -q "pack)" "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'setup-dwarfs.sh.*pack' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_cli_image_unpack_dispatch() {
+    grep -q "unpack)" "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'setup-dwarfs.sh.*unpack' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_cli_image_help_mentions_pack() {
+    local output
+    output=$("$IWT_ROOT/cli/iwt.sh" image help 2>&1)
+    echo "$output" | grep -q 'pack'
+    echo "$output" | grep -q 'unpack'
+}
+
+test_cli_vm_storage_mount_share_dispatch() {
+    grep -q 'mount-share' "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'setup-dwarfs.sh' "$IWT_ROOT/cli/iwt.sh"
+}
+
+# --- lib.sh Btrfs/DwarFS helpers ---
+
+test_lib_has_check_btrfs_host() {
+    grep -q 'check_btrfs_host()' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_has_check_btrfs_progs() {
+    grep -q 'check_btrfs_progs()' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_has_check_dwarfs_host() {
+    grep -q 'check_dwarfs_host()' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_has_check_fuse_host() {
+    grep -q 'check_fuse_host()' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_suggest_install_btrfs() {
+    grep -q 'btrfs-progs' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_suggest_install_dwarfs() {
+    grep -q 'dwarfs-tools' "$IWT_ROOT/cli/lib.sh"
+}
+
+test_lib_suggest_install_fusermount() {
+    grep -q 'fusermount' "$IWT_ROOT/cli/lib.sh"
+}
+
+# --- Default config tests ---
+
+test_config_default_has_storage_backend() {
+    local tmp_config
+    tmp_config=$(mktemp)
+    rm "$tmp_config"
+    IWT_CONFIG_FILE="$tmp_config" "$IWT_ROOT/cli/iwt.sh" config init 2>/dev/null
+    grep -q 'IWT_STORAGE_BACKEND=btrfs' "$tmp_config"
+    rm -f "$tmp_config"
+}
+
+test_config_default_has_image_format() {
+    local tmp_config
+    tmp_config=$(mktemp)
+    rm "$tmp_config"
+    IWT_CONFIG_FILE="$tmp_config" "$IWT_ROOT/cli/iwt.sh" config init 2>/dev/null
+    grep -q 'IWT_IMAGE_FORMAT=dwarfs' "$tmp_config"
+    rm -f "$tmp_config"
+}
+
+test_config_default_has_inject_winbtrfs() {
+    local tmp_config
+    tmp_config=$(mktemp)
+    rm "$tmp_config"
+    IWT_CONFIG_FILE="$tmp_config" "$IWT_ROOT/cli/iwt.sh" config init 2>/dev/null
+    grep -q 'IWT_INJECT_WINBTRFS=true' "$tmp_config"
+    rm -f "$tmp_config"
+}
+
+test_config_default_has_storage_pool() {
+    local tmp_config
+    tmp_config=$(mktemp)
+    rm "$tmp_config"
+    IWT_CONFIG_FILE="$tmp_config" "$IWT_ROOT/cli/iwt.sh" config init 2>/dev/null
+    grep -q 'IWT_STORAGE_POOL=iwt-btrfs' "$tmp_config"
+    rm -f "$tmp_config"
+}
+
+test_config_default_has_dwarfs_compress_level() {
+    local tmp_config
+    tmp_config=$(mktemp)
+    rm "$tmp_config"
+    IWT_CONFIG_FILE="$tmp_config" "$IWT_ROOT/cli/iwt.sh" config init 2>/dev/null
+    grep -q 'IWT_DWARFS_COMPRESS_LEVEL' "$tmp_config"
+    rm -f "$tmp_config"
+}
+
+# --- Doctor checks for Btrfs/DwarFS ---
+
+test_doctor_checks_btrfs() {
+    grep -q 'check_btrfs_host' "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'check_btrfs_progs' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_doctor_checks_dwarfs() {
+    grep -q 'check_dwarfs_host' "$IWT_ROOT/cli/iwt.sh"
+    grep -q 'check_fuse_host' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_doctor_output_mentions_btrfs() {
+    grep -q 'Btrfs' "$IWT_ROOT/cli/iwt.sh"
+}
+
+test_doctor_output_mentions_dwarfs() {
+    grep -q 'DwarFS' "$IWT_ROOT/cli/iwt.sh"
+}
+
 test_cli_vm_help_mentions_setup_guest() {
     local output
     output=$("$IWT_ROOT/cli/iwt.sh" vm help 2>&1)
@@ -1037,6 +1389,84 @@ run_unit_tests() {
     run_test "README badges"           test_readme_has_badges
     run_test "CHANGELOG exists"        test_changelog_exists
     run_test "LICENSE exists"          test_license_exists
+
+    # --- WinBtrfs ---
+    run_test "WinBtrfs setup script"           test_winbtrfs_setup_script_exists
+    run_test "WinBtrfs setup help"             test_winbtrfs_setup_help
+    run_test "WinBtrfs check function"         test_winbtrfs_setup_has_check_function
+    run_test "WinBtrfs install function"       test_winbtrfs_setup_has_install_function
+    run_test "WinBtrfs URL resolver"           test_winbtrfs_setup_has_url_resolver
+    run_test "WinBtrfs uses GitHub API"        test_winbtrfs_setup_uses_github_api
+    run_test "WinBtrfs Secure Boot note"       test_winbtrfs_setup_has_secureboot_note
+    run_test "Guest setup --install-winbtrfs"  test_guest_setup_has_winbtrfs_flag
+    run_test "Guest setup --all has winbtrfs"  test_guest_setup_all_includes_winbtrfs
+    run_test "Guest setup checks winbtrfs"     test_guest_setup_status_checks_winbtrfs
+    run_test "Guest setup calls winbtrfs"      test_guest_setup_calls_winbtrfs_script
+    run_test "Build --inject-winbtrfs flag"    test_build_image_has_inject_winbtrfs_flag
+    run_test "Build inject_winbtrfs_driver()"  test_build_image_has_inject_winbtrfs_function
+    run_test "Build calls inject_winbtrfs"     test_build_image_calls_inject_winbtrfs
+    run_test "Build respects IWT_INJECT_WINBTRFS" test_build_image_winbtrfs_respects_env_var
+    run_test "Drivers winbtrfs subcommand"     test_manage_drivers_has_winbtrfs_subcommand
+    run_test "Drivers winbtrfs help"           test_manage_drivers_winbtrfs_download_help
+    run_test "Drivers winbtrfs GitHub API"     test_manage_drivers_winbtrfs_uses_github_api
+    run_test "CLI image help --inject-winbtrfs" test_cli_image_help_mentions_winbtrfs
+
+    # --- Btrfs storage pool ---
+    run_test "Btrfs pool script exists"        test_btrfs_pool_script_exists
+    run_test "Btrfs pool script shebang"       test_btrfs_pool_script_has_shebang
+    run_test "Btrfs pool usage"                test_btrfs_pool_usage
+    run_test "Btrfs pool create function"      test_btrfs_pool_has_create_function
+    run_test "Btrfs pool attach function"      test_btrfs_pool_has_attach_function
+    run_test "Btrfs pool detach function"      test_btrfs_pool_has_detach_function
+    run_test "Btrfs pool check function"       test_btrfs_pool_has_check_function
+    run_test "Btrfs pool uses incus storage"   test_btrfs_pool_uses_incus_storage
+    run_test "Btrfs attach uses incus device"  test_btrfs_pool_attach_uses_incus_device
+    run_test "CLI vm storage dispatch"         test_cli_vm_storage_dispatch
+    run_test "CLI vm storage help"             test_cli_vm_storage_help
+    run_test "CLI vm help has storage"         test_cli_vm_help_mentions_storage
+
+    # --- DwarFS ---
+    run_test "DwarFS script exists"            test_dwarfs_script_exists
+    run_test "DwarFS script shebang"           test_dwarfs_script_has_shebang
+    run_test "DwarFS usage"                    test_dwarfs_usage
+    run_test "DwarFS pack function"            test_dwarfs_has_pack_function
+    run_test "DwarFS unpack function"          test_dwarfs_has_unpack_function
+    run_test "DwarFS mount function"           test_dwarfs_has_mount_function
+    run_test "DwarFS umount function"          test_dwarfs_has_umount_function
+    run_test "DwarFS check function"           test_dwarfs_has_check_function
+    run_test "DwarFS pack requires --source"   test_dwarfs_pack_requires_source
+    run_test "DwarFS unpack requires --source" test_dwarfs_unpack_requires_source
+    run_test "DwarFS pack uses mkdwarfs"       test_dwarfs_pack_uses_mkdwarfs
+    run_test "DwarFS unpack uses dwarfsextract" test_dwarfs_unpack_uses_dwarfsextract
+    run_test "DwarFS mount uses FUSE"          test_dwarfs_mount_uses_fuse
+    run_test "DwarFS mount attaches virtiofs"  test_dwarfs_mount_attaches_virtiofs
+    run_test "DwarFS check lists tools"        test_dwarfs_check_lists_tools
+    run_test "CLI image pack dispatch"         test_cli_image_pack_dispatch
+    run_test "CLI image unpack dispatch"       test_cli_image_unpack_dispatch
+    run_test "CLI image help pack/unpack"      test_cli_image_help_mentions_pack
+    run_test "CLI vm storage mount-share"      test_cli_vm_storage_mount_share_dispatch
+
+    # --- lib.sh helpers ---
+    run_test "lib check_btrfs_host"            test_lib_has_check_btrfs_host
+    run_test "lib check_btrfs_progs"           test_lib_has_check_btrfs_progs
+    run_test "lib check_dwarfs_host"           test_lib_has_check_dwarfs_host
+    run_test "lib check_fuse_host"             test_lib_has_check_fuse_host
+    run_test "lib suggest btrfs-progs"         test_lib_suggest_install_btrfs
+    run_test "lib suggest dwarfs-tools"        test_lib_suggest_install_dwarfs
+    run_test "lib suggest fusermount"          test_lib_suggest_install_fusermount
+
+    # --- Default config ---
+    run_test "Config default storage backend"  test_config_default_has_storage_backend
+    run_test "Config default image format"     test_config_default_has_image_format
+    run_test "Config default inject winbtrfs"  test_config_default_has_inject_winbtrfs
+    run_test "Config default storage pool"     test_config_default_has_storage_pool
+    run_test "Config default dwarfs level"     test_config_default_has_dwarfs_compress_level
+
+    # --- Doctor ---
+    run_test "Doctor checks btrfs"             test_doctor_checks_btrfs
+    run_test "Doctor checks dwarfs"            test_doctor_checks_dwarfs
+    run_test "Doctor mentions Btrfs"           test_doctor_output_mentions_btrfs
+    run_test "Doctor mentions DwarFS"          test_doctor_output_mentions_dwarfs
 }
 
 run_lint() {

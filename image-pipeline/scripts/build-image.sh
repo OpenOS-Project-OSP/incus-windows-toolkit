@@ -5,16 +5,17 @@
 #   build-image.sh [options]
 #
 # Options:
-#   --iso PATH          Path to Windows ISO (required)
-#   --arch ARCH         Target architecture: x86_64 | arm64 (default: auto-detect)
-#   --edition EDITION   Windows edition to install (default: Pro)
-#   --slim              Strip bloatware packages (tiny11-style)
-#   --output PATH       Output image path (default: windows-<arch>.qcow2)
-#   --inject-drivers    Inject VirtIO + platform drivers into the image
-#   --woa-drivers PATH  Path to WOA-Drivers directory (ARM only)
-#   --size SIZE         Disk image size (default: 64G)
-#   --keep-work         Don't delete the work directory on exit
-#   --help              Show this help
+#   --iso PATH            Path to Windows ISO (required)
+#   --arch ARCH           Target architecture: x86_64 | arm64 (default: auto-detect)
+#   --edition EDITION     Windows edition to install (default: Pro)
+#   --slim                Strip bloatware packages (tiny11-style)
+#   --output PATH         Output image path (default: windows-<arch>.qcow2)
+#   --inject-drivers      Inject VirtIO + platform drivers into the image
+#   --inject-winbtrfs     Inject WinBtrfs driver into the image (enables Btrfs volumes in guest)
+#   --woa-drivers PATH    Path to WOA-Drivers directory (ARM only)
+#   --size SIZE           Disk image size (default: 64G)
+#   --keep-work           Don't delete the work directory on exit
+#   --help                Show this help
 
 set -euo pipefail
 
@@ -33,6 +34,7 @@ ARCH=""
 EDITION="Pro"
 SLIM=false
 INJECT_DRIVERS=true
+INJECT_WINBTRFS="${IWT_INJECT_WINBTRFS:-false}"
 ISO_PATH=""
 OUTPUT=""
 WOA_DRIVERS=""
@@ -79,8 +81,9 @@ parse_args() {
             --edition)        EDITION="$2"; shift 2 ;;
             --slim)           SLIM=true; shift ;;
             --output)         OUTPUT="$2"; shift 2 ;;
-            --inject-drivers) INJECT_DRIVERS=true; shift ;;
-            --woa-drivers)    WOA_DRIVERS="$2"; shift 2 ;;
+            --inject-drivers)   INJECT_DRIVERS=true; shift ;;
+            --inject-winbtrfs)  INJECT_WINBTRFS=true; shift ;;
+            --woa-drivers)      WOA_DRIVERS="$2"; shift 2 ;;
             --size)           DISK_SIZE="$2"; shift 2 ;;
             --keep-work)      KEEP_WORK=true; shift ;;
             --help)           usage ;;
@@ -277,6 +280,73 @@ inject_woa_drivers() {
     local count
     count=$(find "$driver_dest" -name '*.inf' | wc -l)
     ok "Injected $count WOA driver INF files"
+}
+
+# Download the WinBtrfs release zip and extract the signed driver files into
+# the $WinPEDriver$ directory so Windows Setup loads the driver on first boot.
+inject_winbtrfs_driver() {
+    local extract_dir="$1"
+
+    [[ "$INJECT_WINBTRFS" == true ]] || return 0
+
+    info "Injecting WinBtrfs driver..."
+
+    # Check for a pre-downloaded zip in the cache first
+    local zip_path
+    zip_path=$(find "$IWT_CACHE_DIR" -name 'winbtrfs-*.zip' -print -quit 2>/dev/null || true)
+
+    if [[ -z "$zip_path" ]]; then
+        info "Fetching WinBtrfs release info from GitHub..."
+        local release_json
+        release_json=$(curl --disable --silent --fail \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/maharmstone/btrfs/releases/latest") || {
+            warn "GitHub API unavailable; skipping WinBtrfs injection"
+            return 0
+        }
+
+        local zip_url tag
+        zip_url=$(echo "$release_json" | jq -r \
+            '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -1)
+        tag=$(echo "$release_json" | jq -r '.tag_name // "v1.9"')
+
+        if [[ -z "$zip_url" ]]; then
+            zip_url="https://github.com/maharmstone/btrfs/releases/download/${tag}/btrfs-${tag#v}.zip"
+        fi
+
+        local zip_filename="winbtrfs-${tag}.zip"
+        zip_path=$(cached_download "$zip_url" "$zip_filename")
+    fi
+
+    # Extract into a temp dir and locate the .inf + .sys files
+    local tmp_extract
+    tmp_extract=$(mktemp -d)
+    unzip -q "$zip_path" -d "$tmp_extract"
+
+    local inf_file
+    inf_file=$(find "$tmp_extract" -name 'btrfs.inf' | head -1)
+
+    if [[ -z "$inf_file" ]]; then
+        warn "btrfs.inf not found in WinBtrfs archive; skipping injection"
+        rm -rf "$tmp_extract"
+        return 0
+    fi
+
+    local driver_src_dir
+    driver_src_dir=$(dirname "$inf_file")
+
+    local driver_dest="$extract_dir/\$WinPEDriver\$/winbtrfs"
+    mkdir -p "$driver_dest"
+    cp "$driver_src_dir"/*.inf "$driver_dest"/ 2>/dev/null || true
+    cp "$driver_src_dir"/*.sys "$driver_dest"/ 2>/dev/null || true
+    cp "$driver_src_dir"/*.dll "$driver_dest"/ 2>/dev/null || true
+    cp "$driver_src_dir"/*.cat "$driver_dest"/ 2>/dev/null || true
+
+    rm -rf "$tmp_extract"
+
+    local injected_count
+    injected_count=$(find "$driver_dest" -type f | wc -l)
+    ok "Injected WinBtrfs driver ($injected_count files)"
 }
 
 # --- Answer file generation ---
@@ -700,6 +770,7 @@ main() {
         progress_step "Injecting drivers"
         inject_virtio_drivers "$extract_dir"
         inject_woa_drivers "$extract_dir"
+        inject_winbtrfs_driver "$extract_dir"
     fi
 
     progress_step "Generating answer file"
