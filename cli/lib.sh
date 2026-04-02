@@ -245,6 +245,23 @@ iwt_get_disk_path() {
     return 1
 }
 
+# --- bdfs (btrfs-dwarfs-framework) host helpers ---
+
+# Returns 0 if the bdfs CLI and daemon binaries are installed.
+check_bdfs_host() {
+    command -v bdfs &>/dev/null && command -v bdfs_daemon &>/dev/null
+}
+
+# Returns 0 if the btrfs_dwarfs kernel module is loaded or /dev/bdfs_ctl exists.
+check_bdfs_module() {
+    modinfo btrfs_dwarfs &>/dev/null 2>&1 || lsmod | grep -q '^btrfs_dwarfs' || [[ -e /dev/bdfs_ctl ]]
+}
+
+# Returns 0 if bdfs_daemon is currently running.
+check_bdfs_daemon() {
+    pgrep -x bdfs_daemon &>/dev/null
+}
+
 # --- DwarFS host helpers ---
 
 # Returns 0 if all required DwarFS tools are present.
@@ -371,6 +388,19 @@ IWT_DWARFS_COMPRESS_LEVEL=7
 # Inject WinBtrfs driver into images built with 'iwt image build'.
 # Enables Windows guests to mount Btrfs volumes passed through from the host.
 IWT_INJECT_WINBTRFS=true
+
+# --- bdfs (btrfs-dwarfs-framework) settings ---
+# Set to true to enable bdfs hybrid BTRFS+DwarFS storage for image archiving.
+# Requires btrfs-dwarfs-framework to be built and installed.
+# https://github.com/Interested-Deving-1896/btrfs-dwarfs-framework
+IWT_BDFS_ENABLED=false
+
+# Default compression algorithm for bdfs export/demote operations.
+# Options: zstd (recommended), lz4 (faster), zlib (smaller)
+IWT_BDFS_COMPRESSION=zstd
+
+# Default blend namespace mount point used by 'iwt vm storage bdfs-blend mount'.
+IWT_BDFS_BLEND_MOUNT=/mnt/iwt-blend
 EOF
 
     ok "Config created: $IWT_CONFIG_FILE"

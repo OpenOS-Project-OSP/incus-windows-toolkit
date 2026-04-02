@@ -176,6 +176,28 @@ cmd_doctor() {
         failed_cmds+=(fusermount)
     fi
 
+    # --- bdfs (btrfs-dwarfs-framework) checks ---
+    echo ""
+    info "bdfs hybrid storage (IWT_BDFS_ENABLED=${IWT_BDFS_ENABLED:-false}):"
+    if check_bdfs_host; then
+        ok "  bdfs CLI + bdfs_daemon"
+        ok_count=$((ok_count + 1))
+    else
+        warn "  bdfs not found (optional; build from https://github.com/Interested-Deving-1896/btrfs-dwarfs-framework)"
+    fi
+    if check_bdfs_module; then
+        ok "  btrfs_dwarfs kernel module"
+        ok_count=$((ok_count + 1))
+    else
+        warn "  btrfs_dwarfs module not loaded (optional; run: sudo insmod btrfs_dwarfs.ko)"
+    fi
+    if check_bdfs_daemon; then
+        ok "  bdfs_daemon running"
+        ok_count=$((ok_count + 1))
+    else
+        warn "  bdfs_daemon not running (optional; start with: iwt vm storage bdfs-daemon start)"
+    fi
+
     # --- EROFS checks ---
     echo ""
     info "EROFS image format (IWT_IMAGE_FORMAT=${IWT_IMAGE_FORMAT:-dwarfs}):"
@@ -585,6 +607,39 @@ cmd_vm_storage() {
         dwarfs-check)
             exec "$IWT_ROOT/storage/setup-dwarfs.sh" check "$@"
             ;;
+
+        # bdfs (btrfs-dwarfs-framework) subcommands
+        bdfs-partition)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" partition "$@"
+            ;;
+        bdfs-blend)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" blend "$@"
+            ;;
+        bdfs-export)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" export "$@"
+            ;;
+        bdfs-import)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" import "$@"
+            ;;
+        bdfs-snapshot)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" snapshot "$@"
+            ;;
+        bdfs-promote)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" promote "$@"
+            ;;
+        bdfs-demote)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" demote "$@"
+            ;;
+        bdfs-status)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" status "$@"
+            ;;
+        bdfs-daemon)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" daemon "$@"
+            ;;
+        bdfs-check)
+            exec "$IWT_ROOT/storage/setup-bdfs.sh" check "$@"
+            ;;
+
         # EROFS subcommands
         erofs-pack)
             exec "$IWT_ROOT/storage/setup-erofs.sh" --pack "$@"
@@ -658,6 +713,18 @@ DwarFS subcommands:
   umount-share      Unmount a DwarFS virtiofs share
   list-shares       List active DwarFS mounts
   dwarfs-check      Check host DwarFS tool availability
+
+bdfs subcommands (btrfs-dwarfs-framework hybrid storage):
+  bdfs-partition    add|remove|list|show bdfs partitions
+  bdfs-blend        mount|umount the unified BTRFS+DwarFS namespace
+  bdfs-export       Export a BTRFS subvolume to a compressed DwarFS image
+  bdfs-import       Import a DwarFS image into a BTRFS subvolume
+  bdfs-snapshot     CoW snapshot of a DwarFS image's BTRFS container
+  bdfs-promote      Make a DwarFS-backed path writable (extract to BTRFS)
+  bdfs-demote       Compress a BTRFS subvolume into a DwarFS image
+  bdfs-status       Show bdfs partition and blend status
+  bdfs-daemon       start|stop|status bdfs_daemon
+  bdfs-check        Verify bdfs host prerequisites
 
 EROFS subcommands:
   erofs-pack SRC DST    Pack directory into EROFS image
