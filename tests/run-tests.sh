@@ -993,12 +993,28 @@ test_bdfs_install_blend_template_exists() {
 }
 
 test_bdfs_blend_persist_generates_systemd_unit() {
+    # blend-persist instantiates the iwt-bdfs-blend-mount@.service template
     grep -q 'systemd-escape' "$IWT_ROOT/storage/setup-bdfs.sh"
-    grep -q '\.mount' "$IWT_ROOT/storage/setup-bdfs.sh"
+    grep -q 'iwt-bdfs-blend-mount@' "$IWT_ROOT/storage/setup-bdfs.sh"
 }
 
 test_bdfs_install_units_generates_service() {
     grep -q 'iwt-bdfs-remount-all.service' "$IWT_ROOT/storage/setup-bdfs.sh"
+}
+
+test_bdfs_install_units_help_flag() {
+    # --help must exit 0 and print usage, not fall through to die
+    "$IWT_ROOT/storage/setup-bdfs.sh" install-units --help 2>&1 | grep -q 'install\|uninstall\|status'
+}
+
+test_bdfs_install_blend_template_delegates() {
+    # _install_blend_mount_template must delegate to cmd_install_blend_template
+    # rather than containing its own copy of the unit content
+    grep -q 'cmd_install_blend_template' "$IWT_ROOT/storage/setup-bdfs.sh"
+    # Confirm there is only ONE copy of the ExecStart bash -c line (in cmd_install_blend_template)
+    local count
+    count=$(grep -c "ExecStart=.*bash.*args=.*BDFS_BTRFS_UUID" "$IWT_ROOT/storage/setup-bdfs.sh" || true)
+    [[ "$count" -eq 1 ]]
 }
 
 test_bdfs_status_shows_blend_namespaces() {
@@ -2091,11 +2107,13 @@ run_unit_tests() {
     run_test "bdfs blend-persist conf dir"             test_bdfs_blend_persist_has_conf_dir
     run_test "bdfs blend-persist uses service template" test_bdfs_blend_persist_uses_service_template
     run_test "bdfs install-blend-template exists"      test_bdfs_install_blend_template_exists
-    run_test "bdfs blend-persist generates .mount"     test_bdfs_blend_persist_generates_systemd_unit
+    run_test "bdfs blend-persist generates .service"   test_bdfs_blend_persist_generates_systemd_unit
     run_test "bdfs share has dedup check"              test_bdfs_share_has_dedup_check
     run_test "bdfs state dir is persistent"            test_bdfs_state_dir_is_persistent
     run_test "Config default IWT_BDFS_STATE_DIR"       test_config_default_has_bdfs_state_dir
     run_test "bdfs install-units generates service"    test_bdfs_install_units_generates_service
+    run_test "bdfs install-units --help exits 0"       test_bdfs_install_units_help_flag
+    run_test "bdfs install-blend-template delegates"   test_bdfs_install_blend_template_delegates
     run_test "bdfs status shows blend namespaces"      test_bdfs_status_shows_blend_namespaces
     run_test "bdfs status shows shares cross-ref"      test_bdfs_status_shows_shares_cross_ref
     run_test "bdfs status shows demote timers"         test_bdfs_status_shows_demote_timers

@@ -946,18 +946,34 @@ cmd_remount_all() {
 
         info "Share: $share_name  VM: $vm_name  Blend: $blend_mount"
 
-        # Re-mount the blend namespace if it dropped, using stored UUIDs
+        # Re-mount the blend namespace if it dropped, using stored UUIDs.
+        # cache_mode=="writeback" implies the blend was also mounted with
+        # --writeback, so restore that flag too.
+        local blend_writeback_args=()
+        [[ "$cache_mode" == "writeback" ]] && blend_writeback_args=(--writeback)
+
         if ! mountpoint -q "$blend_mount" 2>/dev/null; then
             if [[ -n "$btrfs_uuid" && -n "$dwarfs_uuid" ]]; then
                 info "  Blend not mounted — remounting with stored UUIDs..."
                 if [[ "$dry_run" == true ]]; then
-                    info "  [dry-run] Would run: bdfs blend mount --btrfs-uuid $btrfs_uuid --dwarfs-uuid $dwarfs_uuid --mountpoint $blend_mount"
+                    info "  [dry-run] Would run: bdfs blend mount --btrfs-uuid $btrfs_uuid --dwarfs-uuid $dwarfs_uuid --mountpoint $blend_mount${blend_writeback_args[*]:+ ${blend_writeback_args[*]}}"
                 else
                     if bdfs blend mount \
                            --btrfs-uuid  "$btrfs_uuid"  \
                            --dwarfs-uuid "$dwarfs_uuid" \
-                           --mountpoint  "$blend_mount" 2>/dev/null; then
+                           --mountpoint  "$blend_mount" \
+                           "${blend_writeback_args[@]}" 2>/dev/null; then
                         ok "  Blend remounted at $blend_mount"
+                        # Recreate the ephemeral blend-*.state so bdfs-status
+                        # and other tools can see the blend namespace post-reboot.
+                        local _blend_state_dir="${IWT_BDFS_RUNTIME:-/run/iwt/bdfs}"
+                        local _blend_key
+                        _blend_key="$(echo "$blend_mount" | tr '/' '_')"
+                        mkdir -p "$_blend_state_dir"
+                        local _wb_flag="false"
+                        [[ "$cache_mode" == "writeback" ]] && _wb_flag="true"
+                        echo "${btrfs_uuid}|${dwarfs_uuid}|${blend_mount}|${_wb_flag}" \
+                            > "${_blend_state_dir}/blend-${_blend_key}.state"
                     else
                         warn "  Failed to remount blend at $blend_mount"
                         warn "  Run manually: iwt vm storage bdfs-blend mount --btrfs-uuid $btrfs_uuid --dwarfs-uuid $dwarfs_uuid --mountpoint $blend_mount"
@@ -1182,8 +1198,8 @@ _usage_blend_persist() {
     cat <<EOF
 iwt vm storage bdfs-blend-persist - Declare blend namespaces that should mount at boot
 
-Writes an entry to /etc/iwt/bdfs-blends.conf and installs a systemd .mount
-unit so the blend namespace is automatically mounted after bdfs_daemon starts.
+Writes an entry to /etc/iwt/bdfs-blends.conf and installs a systemd .service
+template unit so the blend namespace is automatically mounted after bdfs_daemon starts.
 
 Subcommands:
   add     --btrfs-uuid UUID --dwarfs-uuid UUID --mountpoint PATH [--writeback]
