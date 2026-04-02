@@ -871,6 +871,9 @@ menu_bdfs() {
                 share_name=$(_dlg_input "bdfs Share" "Share name (leave empty for auto):") || continue
                 local share_args=(--blend-mount "$blend_path" --vm "$vm")
                 [[ -n "$share_name" ]] && share_args+=(--name "$share_name")
+                if _dlg_yesno "Writeback cache" "Enable writeback cache for both the blend mount and virtiofs device?\n\nWriteback improves throughput but relaxes cache coherency.\nLeave off unless you need maximum write performance."; then
+                    share_args+=(--writeback)
+                fi
                 _run_cmd "bdfs Share" "$IWT_CMD" vm storage bdfs-share "${share_args[@]}"
 
                 # Offer to push the auto-mount helper immediately

@@ -49,8 +49,14 @@ parse_args() {
             --secure-boot-check)  RUN_SB_CHECK=true; shift ;;
             --all)
                 INSTALL_WINFSP=true; INSTALL_VIRTIO=true; INSTALL_WINBTRFS=true
-                MOUNT_BDFS_SHARES=true
                 RUN_SECURITY_AUDIT=true; RUN_SB_CHECK=true
+                # Only include bdfs share setup when bdfs is enabled or shares
+                # are already registered — avoids a noisy skip message on every
+                # --all run for users who don't use bdfs at all.
+                local _bdfs_state="${IWT_BDFS_STATE_DIR:-/var/lib/iwt/bdfs}/shares.state"
+                if [[ "${IWT_BDFS_ENABLED:-false}" == "true" || -s "$_bdfs_state" ]]; then
+                    MOUNT_BDFS_SHARES=true
+                fi
                 shift ;;
             --check)              CHECK_ONLY=true; shift ;;
             --help|-h)

@@ -526,7 +526,7 @@ cmd_status() {
             "SHARE" "VM" "BLEND" "VM STATUS" "ATTACHED" "UUIDs"
         printf "  %-20s %-18s %-10s %-10s %-10s %s\n" \
             "-----" "--" "-----" "---------" "--------" "-----"
-        while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid; do
+        while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid _blend_wb; do
             [[ -n "$share_name" ]] || continue
 
             local blend_ok="mounted"
@@ -941,16 +941,17 @@ cmd_remount_all() {
 
     local remounted=0 skipped=0 failed=0
 
-    while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid; do
+    while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid blend_writeback; do
         [[ -n "$share_name" ]] || continue
 
         info "Share: $share_name  VM: $vm_name  Blend: $blend_mount"
 
         # Re-mount the blend namespace if it dropped, using stored UUIDs.
-        # cache_mode=="writeback" implies the blend was also mounted with
-        # --writeback, so restore that flag too.
+        # blend_writeback (field 7) records the original --writeback flag
+        # independently of the virtiofs cache_mode (field 4).
+        # Old 6-field entries have blend_writeback="" which is treated as false.
         local blend_writeback_args=()
-        [[ "$cache_mode" == "writeback" ]] && blend_writeback_args=(--writeback)
+        [[ "$blend_writeback" == "true" ]] && blend_writeback_args=(--writeback)
 
         if ! mountpoint -q "$blend_mount" 2>/dev/null; then
             if [[ -n "$btrfs_uuid" && -n "$dwarfs_uuid" ]]; then
@@ -970,8 +971,7 @@ cmd_remount_all() {
                         local _blend_key
                         _blend_key="$(echo "$blend_mount" | tr '/' '_')"
                         mkdir -p "$_blend_state_dir"
-                        local _wb_flag="false"
-                        [[ "$cache_mode" == "writeback" ]] && _wb_flag="true"
+                        local _wb_flag="${blend_writeback:-false}"
                         echo "${btrfs_uuid}|${dwarfs_uuid}|${blend_mount}|${_wb_flag}" \
                             > "${_blend_state_dir}/blend-${_blend_key}.state"
                     else
@@ -1422,7 +1422,11 @@ cmd_share() {
         fi
     fi
 
-    echo "${blend_mount}|${vm_name}|${share_name}|${cache_mode}|${btrfs_uuid}|${dwarfs_uuid}" \
+    # Field 7 (blend_writeback) records whether the blend namespace itself was
+    # mounted with --writeback. This is independent of the virtiofs cache_mode
+    # (field 4) and is used by remount-all to restore the correct blend mount
+    # flags after a reboot without guessing from the virtiofs setting.
+    echo "${blend_mount}|${vm_name}|${share_name}|${cache_mode}|${btrfs_uuid}|${dwarfs_uuid}|${writeback}" \
         >> "${persistent_dir}/shares.state"
 
     # Push the share list into the VM immediately if it is running, so
@@ -1549,7 +1553,7 @@ cmd_list_shares() {
     printf "  %-20s %-15s %-10s %s\n" "SHARE" "VM" "CACHE" "BLEND MOUNT"
     printf "  %-20s %-15s %-10s %s\n" "-----" "--" "-----" "-----------"
 
-    while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid; do
+    while IFS='|' read -r blend_mount vm_name share_name cache_mode btrfs_uuid dwarfs_uuid _blend_wb; do
         [[ -n "$share_name" ]] || continue
         local mounted="no"
         mountpoint -q "$blend_mount" 2>/dev/null && mounted="yes"

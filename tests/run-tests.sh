@@ -947,8 +947,8 @@ test_guest_bdfs_mount_script_handles_unmount() {
 
 # shares.state UUID fields
 test_bdfs_shares_state_stores_uuids() {
-    # shares.state write line must include 6 pipe-separated fields
-    grep -q 'blend_mount.*vm_name.*share_name.*cache_mode.*btrfs_uuid.*dwarfs_uuid' \
+    # shares.state write line must include all 7 pipe-separated fields
+    grep -q 'blend_mount.*vm_name.*share_name.*cache_mode.*btrfs_uuid.*dwarfs_uuid.*writeback' \
         "$IWT_ROOT/storage/setup-bdfs.sh"
 }
 
@@ -2691,7 +2691,10 @@ test_bdfs_integ_remount_all_writeback() {
 exit 1
 STUB
     chmod +x "${stub_dir}/mountpoint"
-    echo "/mnt/blend|test-vm|my-share|writeback|btrfs-uuid|dwarfs-uuid" \
+    # Field 7 (blend_writeback=true) is what remount-all now reads directly.
+    # cache_mode=writeback (field 4) is the virtiofs setting — kept consistent
+    # but remount-all no longer infers from it.
+    echo "/mnt/blend|test-vm|my-share|writeback|btrfs-uuid|dwarfs-uuid|true" \
         > "${state_dir}/shares.state"
     local output
     output=$(_bdfs_run "$stub_dir" "$state_dir" remount-all --dry-run 2>&1)

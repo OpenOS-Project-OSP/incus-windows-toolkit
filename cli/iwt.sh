@@ -202,7 +202,7 @@ cmd_doctor() {
     local bdfs_state_file="${IWT_BDFS_STATE_DIR:-/var/lib/iwt/bdfs}/shares.state"
     if [[ -f "$bdfs_state_file" && -s "$bdfs_state_file" ]]; then
         local stale_count=0
-        while IFS='|' read -r blend_mount vm_name share_name _cache _btrfs_uuid _dwarfs_uuid; do
+        while IFS='|' read -r blend_mount vm_name share_name _cache _btrfs_uuid _dwarfs_uuid _blend_wb; do
             [[ -n "$share_name" ]] || continue
             if ! mountpoint -q "$blend_mount" 2>/dev/null; then
                 warn "  Stale bdfs share '$share_name': blend not mounted at $blend_mount"
