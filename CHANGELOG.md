@@ -2,6 +2,13 @@
 
 ## v1.3.0
 
+### bdfs observability and recovery improvements
+
+- **`bdfs-remount-all` writeback restore**: blend namespaces are now remounted with `--writeback` when `cache_mode=writeback` is recorded in `shares.state`; previously writeback cache was silently dropped after reboot
+- **`bdfs-remount-all` blend state restore**: after successfully remounting a blend namespace, the ephemeral `blend-*.state` file is recreated in `/run/iwt/bdfs/`; `bdfs-status` now correctly shows blend namespaces as mounted post-reboot recovery
+- **`bdfs-install-units --help`**: no longer falls through to `die`; prints usage and exits 0
+- **`_install_blend_mount_template` unified**: delegates to `cmd_install_blend_template` instead of maintaining a separate copy of the unit content; eliminates the `ExecStartPost` writeback bug (missing `--btrfs-uuid`/`--dwarfs-uuid`) that silently failed via `|| true`
+
 ### bdfs hardening
 
 - **`bdfs-blend-persist`**: replaced broken `.mount` unit with a proper `Type=oneshot` service using the new `iwt-bdfs-blend-mount@.service` template; per-instance UUIDs supplied via drop-in `Environment=` files
