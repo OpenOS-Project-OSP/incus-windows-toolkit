@@ -1962,10 +1962,10 @@ cmd_vm_upgrade() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --vm)          vm_name="$2"; shift 2 ;;
-            --list)        list_only=1;  shift ;;
-            --os)          do_os=1;      shift ;;
-            --no-snapshot) no_snapshot=1; shift ;;
+            --vm)           vm_name="$2"; shift 2 ;;
+            --list|--check) list_only=1;  shift ;;
+            --os)           do_os=1;      shift ;;
+            --no-snapshot)  no_snapshot=1; shift ;;
             --help|-h)
                 cat <<EOF
 iwt vm upgrade — upgrade Windows apps and OS inside a running VM
@@ -1974,13 +1974,13 @@ Usage: iwt vm upgrade [options]
 
 Options:
   --vm NAME        Incus VM name (default: \$IWT_VM_NAME or 'windows')
-  --list           List available upgrades without installing
+  --list, --check  List available upgrades without installing
   --os             Also run Windows Update via PSWindowsUpdate
   --no-snapshot    Skip the pre-upgrade snapshot (not recommended)
 
 Examples:
   iwt vm upgrade
-  iwt vm upgrade --vm win11 --list
+  iwt vm upgrade --vm win11 --check
   iwt vm upgrade --vm win11 --os
 EOF
                 return 0 ;;
@@ -2495,6 +2495,22 @@ cmd_profiles() {
                 fi
             done
             ;;
+        apply)
+            local vm_name="${1:?Usage: iwt profiles apply <vm> <profile>}"
+            local profile_name="${2:?Usage: iwt profiles apply <vm> <profile>}"
+            require_incus
+            incus profile show "$profile_name" &>/dev/null 2>&1 \
+                || die "Profile '$profile_name' not installed. Run: iwt profiles install"
+            incus profile add "$vm_name" "$profile_name"
+            ok "Applied profile '$profile_name' to VM '$vm_name'"
+            ;;
+        remove)
+            local vm_name="${1:?Usage: iwt profiles remove <vm> <profile>}"
+            local profile_name="${2:?Usage: iwt profiles remove <vm> <profile>}"
+            require_incus
+            incus profile remove "$vm_name" "$profile_name"
+            ok "Removed profile '$profile_name' from VM '$vm_name'"
+            ;;
         help|--help|-h)
             cat <<EOF
 iwt profiles - Manage Incus VM profiles
@@ -2504,6 +2520,8 @@ Subcommands:
   list                    List available profile files
   show <name>             Display a profile's YAML
   diff                    Compare local profiles with Incus
+  apply <vm> <profile>    Apply a profile to a VM
+  remove <vm> <profile>   Remove a profile from a VM
 
 Options:
   --arch ARCH    Install only for this architecture (x86_64|arm64)
@@ -2513,6 +2531,7 @@ Example:
   iwt profiles install
   iwt profiles show windows-desktop
   iwt profiles diff
+  iwt profiles apply win11 windows-desktop
 EOF
             ;;
         *)
@@ -2994,7 +3013,7 @@ main() {
         rescue)     cmd_rescue "$@" ;;
         guest)      cmd_guest "$@" ;;
         apps)       exec "$IWT_ROOT/guest/app-store.sh" "$@" ;;
-        cloud)      exec "$IWT_ROOT/cli/cloud-sync.sh" "$@" ;;
+        cloud|cloud-sync) exec "$IWT_ROOT/cli/cloud-sync.sh" "$@" ;;
         demo)       cmd_demo       "$@" ;;
         winesapos)  cmd_winesapos  "$@" ;;
         fleet)      exec "$IWT_ROOT/cli/fleet.sh" "$@" ;;
