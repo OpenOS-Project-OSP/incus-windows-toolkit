@@ -1,11 +1,11 @@
 name: Mirror to OpenOS-Project-Ecosystem-OOC
 
-# This workflow lives in the upstream repo (Interested-Deving-1896) so it
+# This workflow lives in the upstream repo (OSPF1896) so it
 # survives force-push syncs to OpenOS-Project-OSP. When mirrored to OSP,
 # it runs there and pushes OSP's content downstream to OOC.
 #
 # Sync chain:
-#   Interested-Deving-1896  →(mirror.yaml)→  OpenOS-Project-OSP
+#   OSPF1896  →(mirror.yaml)→  OpenOS-Project-OSP
 #   OpenOS-Project-OSP  →(this file)→  OpenOS-Project-Ecosystem-OOC
 
 on:

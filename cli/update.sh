@@ -16,7 +16,7 @@ IWT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$IWT_ROOT/cli/lib.sh"
 load_config
 
-GITHUB_REPO="Interested-Deving-1896/incus-windows-toolkit"
+GITHUB_REPO="OSPF1896/incus-windows-toolkit"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 
 # --- Version comparison ---
